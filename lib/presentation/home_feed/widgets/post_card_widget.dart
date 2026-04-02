@@ -4,10 +4,9 @@ import 'package:sizer/sizer.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../core/app_export.dart';
+import '../../../core/services/conversation_service.dart';
 import '../../../widgets/profile_avatar.dart';
 import '../../../widgets/fullscreen_image_viewer.dart';
-import '../../chat/chat_page.dart';
-import '../mock_data.dart' show getUserByUsername, kMessages, markConversationRead;
 
 class PostCardWidget extends StatefulWidget {
   final Map<String, dynamic> post;
@@ -35,11 +34,15 @@ class _PostCardWidgetState extends State<PostCardWidget> {
   bool isLiked = false;
   bool isSaved = false;
   bool isFollowing = false;
-  bool showLearnMore = false;
+  bool _isPreviewExpanded = false;
   int likeCount = 0;
   bool showComments = false;
   final TextEditingController _commentController = TextEditingController();
   final List<Map<String, dynamic>> _comments = [];
+
+  static const int _previewMaxLines = 7;
+  static const int _longPostCharacterThreshold = 500;
+  static const int _veryLongPostCharacterThreshold = 2000;
 
   @override
   void initState() {
@@ -123,6 +126,185 @@ class _PostCardWidgetState extends State<PostCardWidget> {
       comment['isLiked'] = !isLiked;
       comment['likes'] = (comment['likes'] as int) + (isLiked ? -1 : 1);
     });
+  }
+
+  void _openFullPostReader(String username, String content) {
+    Navigator.pushNamed(
+      context,
+      AppRoutes.postContent,
+      arguments: {
+        'username': username,
+        'timestamp': widget.post['timestamp'],
+        'content': content,
+      },
+    );
+  }
+
+  String? _postAuthorId() {
+    final raw =
+        widget.post['userId'] ?? widget.post['authorId'] ?? widget.post['ownerId'];
+    final id = raw?.toString() ?? '';
+    return id.trim().isEmpty ? null : id;
+  }
+
+  void _openPostAuthorProfile() {
+    final userId = _postAuthorId();
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile is not available for this post')),
+      );
+      return;
+    }
+
+    Navigator.pushNamed(
+      context,
+      AppRoutes.profile,
+      arguments: {'userId': userId},
+    );
+  }
+
+  void _openAuthorAvatarPreview(String username) {
+    if (widget.post['userAvatar'] == null) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => FullScreenImageViewer(
+          imageUrl: widget.post['userAvatar'],
+          heroTag: 'avatar_$username',
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPostContentSection({
+    required ThemeData theme,
+    required String description,
+    required String username,
+  }) {
+    if (description.isEmpty) return const SizedBox.shrink();
+
+    final bool isLongPost = description.length > _longPostCharacterThreshold;
+    final bool isVeryLongPost =
+        description.length > _veryLongPostCharacterThreshold;
+
+    if (!isLongPost) {
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: 3.w).copyWith(bottom: 2.h),
+        child: Text(
+          description,
+          style: theme.textTheme.bodyMedium,
+        ),
+      );
+    }
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 3.w).copyWith(bottom: 1.2.h),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            child: Stack(
+              children: [
+                Text(
+                  description,
+                  maxLines: _isPreviewExpanded ? null : _previewMaxLines,
+                  overflow: _isPreviewExpanded
+                      ? TextOverflow.visible
+                      : TextOverflow.fade,
+                  style: theme.textTheme.bodyMedium,
+                ),
+                if (!_isPreviewExpanded)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: IgnorePointer(
+                      child: Container(
+                        height: 28,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              theme.colorScheme.surface.withValues(alpha: 0.0),
+                              theme.colorScheme.surface,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          SizedBox(height: 0.8.h),
+          Wrap(
+            spacing: 2.w,
+            runSpacing: 0.5.h,
+            children: [
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  setState(() {
+                    _isPreviewExpanded = !_isPreviewExpanded;
+                  });
+                },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _isPreviewExpanded
+                          ? Icons.unfold_less_outlined
+                          : Icons.unfold_more_outlined,
+                      size: 18,
+                      color: theme.colorScheme.primary,
+                    ),
+                    SizedBox(width: 1.w),
+                    Text(
+                      _isPreviewExpanded ? 'Collapse preview' : 'Expand preview',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isVeryLongPost)
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    _openFullPostReader(username, description);
+                  },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.article_outlined,
+                        size: 18,
+                        color: theme.colorScheme.primary,
+                      ),
+                      SizedBox(width: 1.w),
+                      Text(
+                        'Open full post',
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildCommentItem(
@@ -266,7 +448,6 @@ class _PostCardWidgetState extends State<PostCardWidget> {
     final titleStyle = theme.textTheme.titleSmall?.copyWith(
       fontWeight: FontWeight.w600,
     );
-    final bodyStyle = theme.textTheme.bodyMedium;
     final username = widget.post['username'] as String? ?? 'Unknown User';
     final timestamp = widget.post['timestamp'] as String? ?? '1h ago';
     final description = widget.post['content'] as String? ??
@@ -290,19 +471,8 @@ class _PostCardWidgetState extends State<PostCardWidget> {
             child: Row(
               children: [
                 GestureDetector(
-                  onTap: () {
-                    if (widget.post['userAvatar'] != null) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => FullScreenImageViewer(
-                            imageUrl: widget.post['userAvatar'],
-                            heroTag: 'avatar_$username',
-                          ),
-                        ),
-                      );
-                    }
-                  },
+                  onTap: _openPostAuthorProfile,
+                  onLongPress: () => _openAuthorAvatarPreview(username),
                   child: ProfileAvatar(
                     imageUrl: widget.post['userAvatar'],
                     size: 10.w,
@@ -316,10 +486,14 @@ class _PostCardWidgetState extends State<PostCardWidget> {
                     children: [
                       Row(
                         children: [
-                              Text(
-                                username,
-                                style: titleStyle,
-                              ),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: _openPostAuthorProfile,
+                            child: Text(
+                              username,
+                              style: titleStyle,
+                            ),
+                          ),
                           if (widget.post['isVerified'] as bool? ?? false) ...[
                             SizedBox(width: 1.w),
                             Icon(
@@ -372,17 +546,11 @@ class _PostCardWidgetState extends State<PostCardWidget> {
           ),
 
           // Post Description
-          if (description.isNotEmpty)
-            Padding(
-              padding:
-                  EdgeInsets.symmetric(horizontal: 3.w).copyWith(bottom: 2.h),
-                child: Text(
-                showLearnMore || description.length <= 200
-                    ? description
-                    : '${description.substring(0, 200)}...',
-                style: bodyStyle,
-              ),
-            ),
+          _buildPostContentSection(
+            theme: theme,
+            description: description,
+            username: username,
+          ),
 
           // Post Image
           if (imageUrl != null && imageUrl.isNotEmpty)
@@ -482,53 +650,59 @@ class _PostCardWidgetState extends State<PostCardWidget> {
                     SizedBox(width: 4.w),
                     // Message the post owner privately
                     GestureDetector(
-                      onTap: () {
+                      onTap: () async {
                         HapticFeedback.lightImpact();
-                        
-                        final username = widget.post['username'] as String? ?? '';
-                        if (username.isEmpty) return;
-                        
-                        // Get user from unified mock data
-                        final user = getUserByUsername(username);
-                        if (user == null) {
-                          // Show error if user not found
+
+                        final username =
+                            widget.post['username'] as String? ?? '';
+                        final sellerId =
+                            (widget.post['userId'] ?? widget.post['authorId'])
+                                ?.toString();
+
+                        if (username.isEmpty ||
+                            sellerId == null ||
+                            sellerId.isEmpty) {
+                          if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('User not found'),
+                            const SnackBar(
+                              content: Text(
+                                'Unable to start chat for this post',
+                              ),
                               duration: Duration(seconds: 2),
                             ),
                           );
                           return;
                         }
-                        
-                        final userId = user['id'] as int;
-                        
-                        // Mark conversation as read
-                        markConversationRead(userId);
-                        
-                        // Create conversation object
-                        final conversation = {
-                          'id': userId,
-                          'userId': userId,
-                          'name': user['name'],
-                          'avatar': user['avatar'],
-                          'lastMessage': kMessages[userId]?.last['text'] ?? '',
-                          'timestamp': kMessages[userId]?.last['timestamp'] ?? 'Now',
-                          'isOnline': user['isOnline'],
-                          'unreadCount': 0,
-                          'isVerified': user['isVerified'] ?? false,
-                        };
-                        
-                        // Navigate to ChatPage
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => ChatPage(
-                              conversation: conversation,
-                              initialMessages: kMessages[userId],
+
+                        final sellerName =
+                            (widget.post['name'] as String?) ?? username;
+                        final sellerAvatar =
+                            (widget.post['userAvatar'] as String?) ?? '';
+
+                        try {
+                          final conversation =
+                              await ConversationService.instance
+                                  .getOrCreateConversation(
+                            sellerId: sellerId,
+                            sellerName: sellerName,
+                            sellerAvatar: sellerAvatar,
+                          );
+
+                          if (!mounted) return;
+                          Navigator.pushNamed(
+                            context,
+                            AppRoutes.chat,
+                            arguments: conversation,
+                          );
+                        } catch (_) {
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Failed to open chat'),
+                              duration: Duration(seconds: 2),
                             ),
-                          ),
-                        );
+                          );
+                        }
                       },
                       child: CustomIconWidget(
                         iconName: '💬',
@@ -549,43 +723,6 @@ class _PostCardWidgetState extends State<PostCardWidget> {
                     ),
                   ],
                 ),
-
-                // Learn More Button with Degree Icon
-                if (description.length > 200) ...[
-                  SizedBox(height: 1.h),
-                  GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        showLearnMore = !showLearnMore;
-                      });
-                      HapticFeedback.lightImpact();
-                    },
-                    child: Row(
-                      children: [
-                        CustomIconWidget(
-                          iconName: 'school',
-                          color: theme.colorScheme.primary,
-                          size: 20,
-                        ),
-                        SizedBox(width: 1.w),
-                        Text(
-                          showLearnMore ? 'Show Less' : 'Learn More',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: theme.colorScheme.primary,
-                          ),
-                        ),
-                        SizedBox(width: 1.w),
-                        Icon(
-                          showLearnMore ? Icons.expand_less : Icons.expand_more,
-                          size: 16,
-                          color: theme.colorScheme.primary,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
 
                 // Facebook-style Inline Comments Section
                 if (showComments) ...[

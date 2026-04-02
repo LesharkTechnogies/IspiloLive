@@ -8,6 +8,7 @@ import '../../widgets/custom_bottom_bar.dart';
 import '../../widgets/profile_avatar.dart';
 import '../../model/social_model.dart';
 import '../../model/repository/social_repository.dart';
+import '../../core/services/conversation_service.dart';
 import 'widgets/create_post_bottom_sheet.dart';
 
 class HomeFeed extends StatefulWidget {
@@ -699,6 +700,11 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
                 onPressed: () => _openComments(post),
               ),
               Text('${post.commentsCount}'),
+              IconButton(
+                icon: const Icon(Icons.message_outlined),
+                tooltip: 'Message seller',
+                onPressed: () => _openMessageWithPostOwner(post),
+              ),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.bookmark_border),
@@ -713,6 +719,37 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
         ],
       ),
     );
+  }
+
+  Future<void> _openMessageWithPostOwner(PostModel post) async {
+    final sellerId = post.userId;
+    if (sellerId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open chat for this user')),
+      );
+      return;
+    }
+
+    try {
+      final conversation = await ConversationService.instance.getOrCreateConversation(
+        sellerId: sellerId,
+        sellerName: post.username,
+        sellerAvatar: post.userAvatar,
+      );
+
+      if (!mounted) return;
+      Navigator.pushNamed(
+        context,
+        '/chat',
+        arguments: conversation,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to open chat: $e')),
+      );
+    }
   }
 
   void _removeRepeatedPosts() {

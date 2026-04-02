@@ -16,9 +16,11 @@ import '../presentation/auth/login_screen.dart';
 import '../presentation/auth/register_screen.dart';
 import '../presentation/auth/forgot_password_screen.dart';
 import '../presentation/home_feed/post_comments_page.dart';
+import '../presentation/home_feed/post_content_page.dart';
 import '../presentation/home_feed/discover_page.dart';
 import '../presentation/notifications/notifications_page.dart';
 import '../presentation/marketplace/seller_profile_page.dart';
+import '../presentation/profile/user_profile_page.dart';
 
 class AppRoutes {
   static const String initial = '/';
@@ -39,9 +41,11 @@ class AppRoutes {
   static const String shopRegistrationStep3 = '/shop-registration-step3';
   static const String shopRegistrationStep4 = '/shop-registration-step4';
   static const String postComments = '/post-comments';
+  static const String postContent = '/post-content';
   static const String discover = '/discover';
   static const String notifications = '/notifications';
   static const String sellerProfile = '/seller-profile';
+  static const String profile = '/profile';
 
   static Map<String, WidgetBuilder> routes = {
     initial: (context) => const SplashScreen(),
@@ -68,6 +72,14 @@ class AppRoutes {
       }
       return PostCommentsPage(postJson: args);
     },
+    postContent: (context) {
+      final args =
+          ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+      if (args == null) {
+        return const Scaffold(body: Center(child: Text('No post data')));
+      }
+      return PostContentPage(postData: args);
+    },
     discover: (context) => const DiscoverPage(),
     shopRegistrationStep1: (context) => const ShopRegistrationStep1Page(),
     shopRegistrationStep2: (context) => const ShopRegistrationStep2VerificationPage(),
@@ -78,6 +90,12 @@ class AppRoutes {
       final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
       final sellerId = args?['sellerId'] as String? ?? '';
       return SellerProfilePage(sellerId: sellerId);
+    },
+    profile: (context) {
+      final args =
+          ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+      final userId = args?['userId']?.toString() ?? '';
+      return UserProfilePage(userId: userId);
     },
   };
 }

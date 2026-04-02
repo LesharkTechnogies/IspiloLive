@@ -238,106 +238,6 @@ final List<Map<String, dynamic>> kFriendSuggestions = [
   },
 ];
 
-// Lightweight conversations summary used by the Messages list (one item per
-// conversation). We use the user id as the conversation id for simple one-to-one
-// chats here; a real backend can expose a separate conversation id.
-final List<Map<String, dynamic>> kConversations = kUsers.map((user) {
-  final int id = user['id'] as int;
-  
-  // Get the latest message from this conversation
-  final messages = kMessages[id] ?? [];
-  final lastMsg = messages.isNotEmpty ? messages.last : null;
-  final lastMessageText = lastMsg?['text'] as String? ?? 'No messages yet';
-  final lastMessageTime = lastMsg != null 
-      ? _formatMessageTime(lastMsg['timestamp'] as String?) 
-      : '—';
-  
-  return {
-    'id': id,
-    'userId': id,
-    'name': user['name'],
-    'avatar': user['avatar'],
-    'lastMessage': lastMessageText,
-    'timestamp': lastMessageTime,
-    'isOnline': user['isOnline'],
-    // sample unread counts to demonstrate badges; vary by id
-    'unreadCount': id == 1 ? 2 : (id == 3 ? 1 : 0),
-    'isVerified': user['isVerified'] as bool? ?? false,
-  };
-}).toList();
-
-// Helper to format message timestamps for conversations list
-String _formatMessageTime(String? timestamp) {
-  if (timestamp == null) return '—';
-  // For mock data, the timestamps are already formatted strings
-  return timestamp;
-}
-
-// Per-conversation message history keyed by the conversation id (user id).
-// Each message contains senderId (1 = alex_network, 0 = current user) to let
-// the UI determine alignment. The timestamp values are small strings for demo.
-final Map<int, List<Map<String, dynamic>>> kMessages = {
-  1: [
-    {
-      'id': 1001,
-      'senderId': 1,
-      'text': 'Hey, did you see the new fiber layout I shared?',
-      'timestamp': '09:32',
-      'isRead': false,
-    },
-    {
-      'id': 1002,
-      'senderId': 0,
-      'text': 'Yes — looks great. We can deploy next week.',
-      'timestamp': '09:35',
-      'isRead': true,
-    },
-  ],
-  2: [
-    {
-      'id': 2001,
-      'senderId': 2,
-      'text': 'Can you review my security checklist?',
-      'timestamp': '08:10',
-      'isRead': true,
-    },
-    {
-      'id': 2002,
-      'senderId': 0,
-      'text': 'On it, I will send comments by EOD.',
-      'timestamp': '08:12',
-      'isRead': true,
-    },
-  ],
-  3: [
-    {
-      'id': 3001,
-      'senderId': 3,
-      'text': 'Quick question: did the migration finish?',
-      'timestamp': 'Yesterday',
-      'isRead': false,
-    },
-  ],
-  4: [
-    {
-      'id': 4001,
-      'senderId': 4,
-      'text': 'Thanks for the help earlier, much appreciated!',
-      'timestamp': '2d',
-      'isRead': true,
-    },
-  ],
-  5: [
-    {
-      'id': 5001,
-      'senderId': 5,
-      'text': 'New firmware released for the routers — check compatibility.',
-      'timestamp': '3d',
-      'isRead': true,
-    },
-  ],
-};
-
 // Map userId -> list of posts by that user.
 // This lets us show a user's posts when tapping their story in HomeFeed.
 final Map<int, List<Map<String, dynamic>>> kUserPosts = {
@@ -357,32 +257,8 @@ Map<String, dynamic>? getUserById(int id) {
   }
 }
 
-Map<String, dynamic>? getUserByUsername(String username) {
-  try {
-    return kUsers.firstWhere((u) => u['username'] == username);
-  } catch (_) {
-    return null;
-  }
-}
-
 List<Map<String, dynamic>> getUserPosts(int userId) {
   return kUserPosts[userId] ?? [];
-}
-
-void markConversationRead(int userId) {
-  try {
-    final conv = kConversations.firstWhere((c) => c['userId'] == userId);
-    conv['unreadCount'] = 0;
-  } catch (_) {
-    // ignore if not found
-  }
-
-  final msgs = kMessages[userId];
-  if (msgs != null) {
-    for (final m in msgs) {
-      m['isRead'] = true;
-    }
-  }
 }
 
 

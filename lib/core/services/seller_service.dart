@@ -133,6 +133,31 @@ class SellerService {
     }
   }
 
+  /// Create seller profile using backend contract endpoint alias
+  static Future<Seller?> createSellerProfile({
+    required String businessName,
+    required String category,
+    String? description,
+    String? phone,
+    String? avatar,
+  }) async {
+    try {
+      final payload = {
+        'name': businessName,
+        'category': category,
+        if (description != null) 'description': description,
+        if (phone != null) 'phone': phone,
+        if (avatar != null) 'avatar': avatar,
+      };
+
+      final response = await ApiService.post('/sellers/', payload);
+      return Seller.fromJson(response as Map<String, dynamic>);
+    } catch (e) {
+      debugPrint('Error creating seller profile: $e');
+      return null;
+    }
+  }
+
   /// Update seller information
   static Future<Seller?> updateSeller(
     String sellerId, {
@@ -183,15 +208,6 @@ class SellerService {
       final avatar = m['avatar'] as String? ??
           m['sellerAvatar'] as String? ??
           '';
-
-      final payload = {
-        'name': name,
-        'avatar': avatar,
-        'isVerified': m['isVerified'] as bool? ?? false,
-        if (m['phone'] != null) 'phone': m['phone'],
-        if (m['sellerPhone'] != null) 'phone': m['sellerPhone'],
-        'countryCode': m['countryCode'] as String? ?? m['sellerCountryCode'],
-      };
 
       // If ID doesn't exist, create new; otherwise update
       if (id.startsWith('seller_new_')) {

@@ -14,17 +14,14 @@ import 'package:sizer/sizer.dart';
 
 import '../../core/app_export.dart';
 import '../../core/services/conversation_service.dart';
+import '../../core/services/websocket_service.dart' hide ConversationService;
 
 class ChatPage extends StatefulWidget {
   final Map<String, dynamic> conversation;
-  /// Optional initial message list provided by the caller (useful for local
-  /// mock data so the page can display messages without calling the service).
-  final List<Map<String, dynamic>>? initialMessages;
 
   const ChatPage({
     super.key,
     required this.conversation,
-    this.initialMessages,
   });
 
   @override
@@ -35,8 +32,8 @@ class _ChatPageState extends State<ChatPage> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
-  // Current user id (placeholder). Replace with real auth id in future.
-  final String _currentUserId = 'current_user';
+  // Current user id resolved from stored profile when available.
+  String _currentUserId = 'current_user';
 
   // Messages in local UI shape: {id, text, isSentByMe, timestamp (DateTime), isRead}
   final List<Map<String, dynamic>> _messages = [];
@@ -52,6 +49,8 @@ class _ChatPageState extends State<ChatPage> {
   Timer? _recordTimer;
 
   SharedPreferences? _prefs;
+  WebSocketService? _webSocketService;
+  String? _authToken;
 
   static const String _pendingStorageKeyPrefix = 'pending_messages_';
 
@@ -60,6 +59,28 @@ class _ChatPageState extends State<ChatPage> {
     if (idVal is String) return idVal;
     if (idVal is int) return idVal.toString();
     return 'conv_${widget.conversation['sellerId'] ?? ''}';
+  }
+
+  String? get _profileUserId {
+    final raw = widget.conversation['userId'] ?? widget.conversation['sellerId'];
+    final id = raw?.toString() ?? '';
+    return id.trim().isEmpty ? null : id;
+  }
+
+  void _openConversationProfile() {
+    final userId = _profileUserId;
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile details are unavailable')),
+      );
+      return;
+    }
+
+    Navigator.pushNamed(
+      context,
+      AppRoutes.profile,
+      arguments: {'userId': userId},
+    );
   }
 
   @override
@@ -74,47 +95,7 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _loadConversationMessages() async {
     final convId = _conversationId;
 
-    // If the caller provided initialMessages (from our mock), use them and
-    // avoid calling the ConversationService. Otherwise fetch from the service.
-    final msgs = widget.initialMessages;
-    if (msgs != null) {
-      setState(() {
-        _messages.clear();
-        for (final m in msgs) {
-          final tsRaw = m['timestamp'] as String?;
-          DateTime ts;
-          try {
-            ts = tsRaw != null ? DateTime.parse(tsRaw).toLocal() : DateTime.now();
-          } catch (_) {
-            ts = DateTime.now();
-          }
-
-          final type = (m['type'] as String?) ?? 'text';
-
-          // senderId can be numeric (0 means current user) or a string id.
-          final sender = m['senderId'];
-          final bool isSentByMe = (sender == 0) || (sender == _currentUserId) || (sender is String && sender == _currentUserId);
-
-          _messages.add({
-            'id': m['id'],
-            'type': type,
-            'text': m['text'] ?? '',
-            'mediaPath': m['mediaPath'],
-            'documentName': m['documentName'],
-            'durationMs': m['durationMs'],
-            'isSentByMe': isSentByMe,
-            'timestamp': ts,
-            'isRead': m['isRead'] as bool? ?? true,
-            'status': 'sent',
-          });
-        }
-      });
-
-      // If using mock messages, we don't need to call the service to mark read
-      return;
-    }
-
-    // Fetch messages from the service
+    // Always fetch messages from the production service.
     final fetched = await ConversationService.instance.fetchMessages(convId);
 
     setState(() {
@@ -150,9 +131,13 @@ class _ChatPageState extends State<ChatPage> {
     // Mark conversation read to clear unread counters
     await ConversationService.instance
         .markConversationRead(convId, _currentUserId);
+  _webSocketService?.markAsRead();
   }
 
   void _handleComposerChanged() {
+    _webSocketService?.sendTypingIndicator(
+      _messageController.text.trim().isNotEmpty,
+    );
     if (mounted) {
       setState(() {});
     }
@@ -160,8 +145,82 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _initializeAsyncResources() async {
     _prefs ??= await SharedPreferences.getInstance();
+    _hydrateCurrentUserFromPrefs();
     await _setupConnectivityMonitoring();
     await _restorePendingMessages();
+    await _initializeWebSocket();
+  }
+
+  void _hydrateCurrentUserFromPrefs() {
+    final prefs = _prefs;
+    if (prefs == null) return;
+
+    _authToken = prefs.getString('auth_token');
+    final userProfile = prefs.getString('user_profile');
+    if (userProfile == null || userProfile.isEmpty) return;
+
+    try {
+      final decoded = jsonDecode(userProfile) as Map<String, dynamic>;
+      final id = decoded['id']?.toString();
+      if (id != null && id.isNotEmpty) {
+        _currentUserId = id;
+      }
+    } catch (_) {
+      // Keep fallback id when profile JSON is unavailable/corrupt.
+    }
+  }
+
+  Future<void> _initializeWebSocket() async {
+    final token = _authToken;
+    final encryptionKey = widget.conversation['encryptionKey']?.toString();
+
+    if (token == null || token.isEmpty) return;
+    if (encryptionKey == null || encryptionKey.isEmpty) return;
+
+    try {
+      _webSocketService?.dispose();
+      _webSocketService = WebSocketService();
+
+      await _webSocketService!.initialize(
+        conversationId: _conversationId,
+        userId: _currentUserId,
+        encryptionKey: encryptionKey,
+        authToken: token,
+      );
+
+      _webSocketService!.messageNotifier.addListener(_handleWsMessageUpdate);
+    } catch (_) {
+      // WebSocket is optional; REST remains as fallback.
+    }
+  }
+
+  void _handleWsMessageUpdate() {
+    final ws = _webSocketService;
+    if (ws == null || !mounted) return;
+    if (ws.messageNotifier.value.isEmpty) return;
+
+    final incoming = ws.messageNotifier.value.last;
+    final exists = _messages.any((m) =>
+        m['id']?.toString() == incoming.id ||
+        (m['text'] == incoming.content &&
+            m['isSentByMe'] == (incoming.senderId == _currentUserId)));
+
+    if (exists) return;
+
+    setState(() {
+      _messages.add({
+        'id': incoming.id,
+        'type': incoming.type.name,
+        'text': incoming.content,
+        'mediaPath': incoming.mediaUrl,
+        'documentName': null,
+        'durationMs': null,
+        'isSentByMe': incoming.senderId == _currentUserId,
+        'timestamp': incoming.timestamp,
+        'isRead': incoming.isRead,
+        'status': 'sent',
+      });
+    });
   }
 
   Future<void> _setupConnectivityMonitoring() async {
@@ -281,6 +340,8 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     _messageController.removeListener(_handleComposerChanged);
+  _webSocketService?.messageNotifier.removeListener(_handleWsMessageUpdate);
+  _webSocketService?.dispose();
     _messageController.dispose();
     _scrollController.dispose();
     _connectivitySub?.cancel();
@@ -325,13 +386,30 @@ class _ChatPageState extends State<ChatPage> {
       return;
     }
 
-    ConversationService.instance
-        .sendMessage(
-      conversationId: convId,
-      senderId: _currentUserId,
-      text: text,
-    )
-        .then((sent) {
+    Future<Map<String, dynamic>> sendFuture() {
+      final ws = _webSocketService;
+      if (ws != null && ws.isConnected) {
+        return ws.sendMessage(text, localMsg['id'] as String).then(
+              (_) => {
+                'id': localMsg['id'],
+                'mediaType': 'text',
+                'text': text,
+                'mediaPath': null,
+                'documentName': null,
+                'durationMs': null,
+                'timestamp': DateTime.now().toUtc().toIso8601String(),
+              },
+            );
+      }
+
+      return ConversationService.instance.sendMessage(
+        conversationId: convId,
+        senderId: _currentUserId,
+        text: text,
+      );
+    }
+
+    sendFuture().then((sent) {
       // replace optimistic message id with real id and keep isRead false
       setState(() {
         final idx = _messages.indexWhere((m) => m['id'] == localMsg['id']);
@@ -680,11 +758,14 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final appBarGreen = theme.brightness == Brightness.dark
+        ? const Color(0xFF0E4D45)
+        : const Color(0xFF075E54);
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1877F2), // Facebook blue
+        backgroundColor: appBarGreen,
         elevation: 0,
         leading: IconButton(
           onPressed: () => Navigator.pop(context),
@@ -693,74 +774,82 @@ class _ChatPageState extends State<ChatPage> {
             color: Colors.white,
           ),
         ),
-        title: Row(
-          children: [
-            Stack(
-              children: [
-                ClipOval(
-                  child: CustomImageWidget(
-                    imageUrl: widget.conversation['avatar'],
-                    width: 10.w,
-                    height: 10.w,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                if (widget.conversation['isOnline'])
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    child: Container(
-                      width: 2.5.w,
-                      height: 2.5.w,
-                      decoration: BoxDecoration(
-                        color: Colors.green,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white,
-                          width: 2,
-                        ),
-                      ),
+        title: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: _openConversationProfile,
+          child: Row(
+            children: [
+              Stack(
+                children: [
+                  ClipOval(
+                    child: CustomImageWidget(
+                      imageUrl: widget.conversation['avatar'],
+                      width: 10.w,
+                      height: 10.w,
+                      fit: BoxFit.cover,
                     ),
                   ),
-              ],
-            ),
-            SizedBox(width: 3.w),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        widget.conversation['name'],
-                        style: GoogleFonts.inter(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                      if (widget.conversation['isVerified']) ...[
-                        SizedBox(width: 1.w),
-                        const Icon(
-                          Icons.verified,
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                      ],
-                    ],
-                  ),
                   if (widget.conversation['isOnline'])
-                    Text(
-                      'Online',
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.8),
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: Container(
+                        width: 2.5.w,
+                        height: 2.5.w,
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.white,
+                            width: 2,
+                          ),
+                        ),
                       ),
                     ),
                 ],
               ),
-            ),
-          ],
+              SizedBox(width: 3.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            widget.conversation['name']?.toString() ?? 'User',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        if (widget.conversation['isVerified']) ...[
+                          SizedBox(width: 1.w),
+                          const Icon(
+                            Icons.verified,
+                            color: Color(0xFF25D366),
+                            size: 16,
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (widget.conversation['isOnline'])
+                      Text(
+                        'Online',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.85),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           IconButton(

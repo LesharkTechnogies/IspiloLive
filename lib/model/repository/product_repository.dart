@@ -1,9 +1,21 @@
 ﻿import 'package:ispilo/core/services/api_service.dart';
+import 'package:dio/dio.dart';
 import 'package:ispilo/model/product_model.dart';
 
 /// Repository for product marketplace API calls
 class ProductRepository {
   static const String _baseEndpoint = '/products';
+
+  static Map<String, dynamic>? _unwrapMap(dynamic response) {
+    if (response is! Map<String, dynamic>) return null;
+
+    final dynamic payload = response['data'] ?? response;
+    if (payload is Map<String, dynamic>) {
+      return payload;
+    }
+
+    return response;
+  }
 
   static List<ProductModel> _parseProductList(dynamic response) {
     final dynamic payload = (response is Map<String, dynamic>)
@@ -157,6 +169,12 @@ class ProductRepository {
       if (response is List) {
         return response.cast<String>();
       }
+      if (response is Map<String, dynamic>) {
+        final dynamic payload = response['data'] ?? response['content'];
+        if (payload is List) {
+          return payload.whereType<String>().toList();
+        }
+      }
       return ['All Categories', 'Hardware', 'Software', 'Services', 'Tools'];
     } catch (e) {
       return ['All Categories', 'Hardware', 'Software', 'Services', 'Tools'];
@@ -228,7 +246,11 @@ class ProductRepository {
       };
 
       final response = await ApiService.put('$_baseEndpoint/$productId', payload);
-      return ProductModel.fromJson(response as Map<String, dynamic>);
+      final data = _unwrapMap(response);
+      if (data != null) {
+        return ProductModel.fromJson(data);
+      }
+      throw Exception('Unexpected update product response format');
     } catch (e) {
       throw Exception('Failed to update product: $e');
     }
@@ -272,15 +294,19 @@ class ProductRepository {
         '$_baseEndpoint/$productId/reviews?page=$page&size=$size',
       );
 
+      final dynamic payload = (response is Map<String, dynamic>)
+          ? (response['data'] ?? response)
+          : response;
+
       // Handle paginated response
-      if (response is Map && response.containsKey('content')) {
-        final List<dynamic> content = response['content'] as List? ?? [];
+      if (payload is Map && payload.containsKey('content')) {
+        final List<dynamic> content = payload['content'] as List? ?? [];
         return content.cast<Map<String, dynamic>>();
       }
 
       // Handle direct list response
-      if (response is List) {
-        return response.cast<Map<String, dynamic>>();
+      if (payload is List) {
+        return payload.cast<Map<String, dynamic>>();
       }
 
       return [];
@@ -344,6 +370,23 @@ class ProductRepository {
       return response as Map<String, dynamic>;
     } catch (e) {
       throw Exception('Failed to fetch complete product details: $e');
+    }
+  }
+
+  /// Upload product image/file
+  static Future<Map<String, dynamic>> uploadProductAsset({
+    required List<int> bytes,
+    required String fileName,
+  }) async {
+    try {
+      final file = MultipartFile.fromBytes(bytes, filename: fileName);
+      final response = await ApiService.postMultipart(
+        '$_baseEndpoint/upload',
+        files: {'file': file},
+      );
+      return response as Map<String, dynamic>;
+    } catch (e) {
+      throw Exception('Failed to upload product asset: $e');
     }
   }
 }

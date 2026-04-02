@@ -70,6 +70,29 @@ class ConversationRepository {
     }
   }
 
+  /// Create/find direct conversation with one user
+  static Future<ConversationModel> createOrGetDirectConversation({
+    required String participantId,
+  }) async {
+    try {
+      final response = await ApiService.post(
+        '$_baseEndpoint/direct',
+        {'participantId': participantId},
+      );
+      return ConversationModel.fromJson(response as Map<String, dynamic>);
+    } catch (_) {
+      // Fallback for backends that use the generic create endpoint
+      final response = await ApiService.post(
+        _baseEndpoint,
+        {
+          'participantIds': [participantId],
+          'isGroup': false,
+        },
+      );
+      return ConversationModel.fromJson(response as Map<String, dynamic>);
+    }
+  }
+
   /// Send message via REST API (for backup when WebSocket is unavailable)
   static Future<MessageModel> sendMessage({
     required String conversationId,
@@ -118,6 +141,57 @@ class ConversationRepository {
       );
     } catch (e) {
       throw Exception('Failed to mark messages as read: $e');
+    }
+  }
+
+  /// Mark specific message as read
+  static Future<void> markMessageAsRead({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    try {
+      await ApiService.post(
+        '$_baseEndpoint/$conversationId/messages/$messageId/read',
+        {},
+      );
+    } catch (e) {
+      throw Exception('Failed to mark message as read: $e');
+    }
+  }
+
+  /// Add participant to group conversation
+  static Future<void> addParticipant({
+    required String conversationId,
+    required String userId,
+  }) async {
+    try {
+      await ApiService.post(
+        '$_baseEndpoint/$conversationId/participants',
+        {'userId': userId},
+      );
+    } catch (e) {
+      throw Exception('Failed to add participant: $e');
+    }
+  }
+
+  /// Remove participant from group conversation
+  static Future<void> removeParticipant({
+    required String conversationId,
+    required String userId,
+  }) async {
+    try {
+      await ApiService.delete('$_baseEndpoint/$conversationId/participants/$userId');
+    } catch (e) {
+      throw Exception('Failed to remove participant: $e');
+    }
+  }
+
+  /// Leave conversation
+  static Future<void> leaveConversation(String conversationId) async {
+    try {
+      await ApiService.delete('$_baseEndpoint/$conversationId/leave');
+    } catch (e) {
+      throw Exception('Failed to leave conversation: $e');
     }
   }
 

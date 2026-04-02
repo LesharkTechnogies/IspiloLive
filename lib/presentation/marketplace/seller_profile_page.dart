@@ -3,6 +3,7 @@ import 'package:sizer/sizer.dart';
 import 'package:ispilo/model/product_model.dart';
 import 'package:ispilo/model/seller_model.dart';
 import 'package:ispilo/model/repository/product_repository.dart';
+import 'package:ispilo/core/services/conversation_service.dart';
 import '../../core/services/seller_service.dart';
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
@@ -105,12 +106,7 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
         variant: CustomBottomBarVariant.standard,
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          // Navigate to contact seller / message seller
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Message seller feature coming soon')),
-          );
-        },
+        onPressed: () => _contactSeller(),
         icon: const Icon(Icons.mail),
         label: const Text('Contact Seller'),
       ),
@@ -491,6 +487,30 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _contactSeller() async {
+    final sellerSnapshot = await _sellerFuture;
+    if (!mounted || sellerSnapshot == null || sellerSnapshot.id.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot contact seller at this time')),
+      );
+      return;
+    }
+
+    final conversation = await ConversationService.instance.getOrCreateConversation(
+      sellerId: sellerSnapshot.id,
+      sellerName: sellerSnapshot.businessName,
+      sellerAvatar: sellerSnapshot.businessLogo ?? '',
+    );
+
+    if (!mounted) return;
+    Navigator.pushNamed(
+      context,
+      '/chat',
+      arguments: conversation,
     );
   }
 }

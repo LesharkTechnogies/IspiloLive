@@ -4,6 +4,7 @@ import 'package:sizer/sizer.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../core/app_export.dart';
+import '../../core/services/conversation_service.dart';
 import '../../model/product_model.dart';
 import '../../model/repository/product_repository.dart';
 import '../../widgets/custom_icon_widget.dart';
@@ -262,13 +263,27 @@ class _MarketplaceState extends State<Marketplace> {
     );
   }
 
-  void _contactSeller(ProductModel product) {
-    // Implement contact seller - navigate to messaging
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Contacting ${product.seller.businessName}'),
-        duration: const Duration(seconds: 2),
-      ),
+  Future<void> _contactSeller(ProductModel product) async {
+    final seller = product.seller;
+    if (seller.id.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot contact seller at this time')),
+      );
+      return;
+    }
+
+    final conversation = await ConversationService.instance.getOrCreateConversation(
+      sellerId: seller.id,
+      sellerName: seller.businessName,
+      sellerAvatar: seller.businessLogo ?? '',
+    );
+
+    if (!mounted) return;
+    Navigator.pushNamed(
+      context,
+      AppRoutes.chat,
+      arguments: conversation,
     );
   }
 

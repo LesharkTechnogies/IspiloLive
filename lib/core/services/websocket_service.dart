@@ -7,8 +7,8 @@ import 'api_service.dart';
 
 /// WebSocket service for real-time encrypted messaging
 class WebSocketService {
-  // Default WebSocket base. Use production wss URL; local dev may override if needed.
-  static const String wsBaseUrl = 'wss://ispilo-backend-32613e7af752.herokuapp.com/ws';
+  // Spring endpoint exposed for chat websocket handshake.
+  static const String wsBaseUrl = 'wss://ispilo-backend-32613e7af752.herokuapp.com/ws/chat';
 
   late WebSocketChannel _channel;
   late String _conversationId;
@@ -42,12 +42,40 @@ class WebSocketService {
 
       isConnectedNotifier.value = true;
       _listenToMessages();
+  joinConversation(conversationId);
       print('WebSocket connected to conversation: $conversationId');
     } catch (e) {
       isConnectedNotifier.value = false;
       print('WebSocket connection failed: $e');
       rethrow;
     }
+  }
+
+  /// Create a new conversation (private or group)
+  Future<void> createConversation({
+    required String type,
+    required List<String> participantIds,
+  }) async {
+    if (!isConnected) {
+      throw Exception('WebSocket not connected');
+    }
+
+    _channel.sink.add(jsonEncode({
+      'destination': '/app/conversation.create',
+      'payload': {
+        'type': type,
+        'participantIds': participantIds,
+      },
+    }));
+  }
+
+  /// Join a conversation room (payload is raw conversation id string)
+  void joinConversation(String conversationId) {
+    if (!isConnected) return;
+    _channel.sink.add(jsonEncode({
+      'destination': '/app/conversation.join',
+      'payload': conversationId,
+    }));
   }
 
   /// Send encrypted message
@@ -66,13 +94,13 @@ class WebSocketService {
       // Create message payload
       final messagePayload = {
         'conversationId': _conversationId,
-        'content': content, // Keep plaintext for display
+        'content': content,
+        'encryptionKey': _encryptionKey,
+        // Optional encrypted fields for backend compatibility with service logic.
         'encryptedContent': encryptedContent['encrypted'],
         'encryptionIv': encryptedContent['iv'],
-        'encryptionKey': _encryptionKey,
         'type': 'TEXT',
         'clientMsgId': clientMsgId,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
 
       // Send via WebSocket to /app/chat.send
@@ -96,7 +124,6 @@ class WebSocketService {
       final payload = {
         'conversationId': _conversationId,
         'isTyping': isTyping,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
 
       _channel.sink.add(jsonEncode({
@@ -115,7 +142,6 @@ class WebSocketService {
     try {
       final payload = {
         'conversationId': _conversationId,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
 
       _channel.sink.add(jsonEncode({

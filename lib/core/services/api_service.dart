@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform, debugPrint;
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_security_service.dart';
@@ -11,6 +11,15 @@ class ApiService {
   static const String baseUrl = 'https://ispilo-backend-32613e7af752.herokuapp.com/api/v1';
   // Legacy/alias base (non-versioned) for endpoints not yet versioned, e.g., auth
   static const String aliasBaseUrl = 'https://ispilo-backend-32613e7af752.herokuapp.com/api';
+
+  static final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 30),
+      responseType: ResponseType.plain,
+      validateStatus: (_) => true,
+    ),
+  );
 
   static Future<Map<String, String>> getHeaders({bool includeAuth = true}) async {
     final prefs = await SharedPreferences.getInstance();
@@ -64,11 +73,11 @@ class ApiService {
   static Future<String?> _getClientIp() async {
     if (_cachedIp != null) return _cachedIp;
     try {
-      final resp = await http
-          .get(Uri.parse('https://api.ipify.org?format=json'))
+      final resp = await _dio
+          .get<String>('https://api.ipify.org?format=json')
           .timeout(const Duration(seconds: 5));
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
+      if (resp.statusCode == 200 && resp.data != null) {
+        final data = jsonDecode(resp.data!);
         if (data is Map && data['ip'] is String) {
           _cachedIp = data['ip'] as String;
           return _cachedIp;
@@ -98,13 +107,15 @@ class ApiService {
       final url = '$baseUrl$endpoint';
       _logRequest('GET', url, headers, null);
 
-      final response = await http.get(
-        Uri.parse(url),
-        headers: headers,
-      ).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => throw ApiException('Request timeout'),
-      );
+      final response = await _dio
+          .get<String>(
+            url,
+            options: Options(headers: headers),
+          )
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw ApiException('Request timeout'),
+          );
 
       return _handleResponse(response);
     } on ApiException {
@@ -145,14 +156,16 @@ class ApiService {
   final registerUrl = '$base$endpoint';
         _logRequest('POST', registerUrl, registerHeaders, data);
         try {
-          final response = await http.post(
-            Uri.parse(registerUrl),
-            headers: registerHeaders,
-            body: jsonEncode(data),
-          ).timeout(
-            const Duration(seconds: 30),
-            onTimeout: () => throw ApiException('Request timeout'),
-          );
+          final response = await _dio
+              .post<String>(
+                registerUrl,
+                data: jsonEncode(data),
+                options: Options(headers: registerHeaders),
+              )
+              .timeout(
+                const Duration(seconds: 30),
+                onTimeout: () => throw ApiException('Request timeout'),
+              );
           try {
             return _handleResponse(response);
           } on ApiException catch (apiError) {
@@ -160,7 +173,7 @@ class ApiService {
             return {
               'error': apiError.toString(),
               'status': response.statusCode,
-              'body': response.body,
+              'body': response.data,
             };
           }
         } catch (e) {
@@ -180,14 +193,58 @@ class ApiService {
       final url = '$base$endpoint';
       _logRequest('POST', url, headers, data);
 
-      final response = await http.post(
-        Uri.parse(url),
-        headers: headers,
-        body: jsonEncode(data),
-      ).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => throw ApiException('Request timeout'),
-      );
+      final response = await _dio
+          .post<String>(
+            url,
+            data: jsonEncode(data),
+            options: Options(headers: headers),
+          )
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw ApiException('Request timeout'),
+          );
+
+      return _handleResponse(response);
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  /// POST multipart/form-data request (file uploads)
+  static Future<dynamic> postMultipart(
+    String endpoint, {
+    Map<String, dynamic>? fields,
+    Map<String, MultipartFile>? files,
+    bool includeAuth = true,
+    bool useAliasBase = false,
+  }) async {
+    try {
+      final base = useAliasBase ? aliasBaseUrl : baseUrl;
+      final headers = await getHeaders(includeAuth: includeAuth);
+      final multipartHeaders = <String, String>{
+        ...headers,
+      };
+      multipartHeaders.remove('Content-Type');
+
+      final formMap = <String, dynamic>{
+        ...(fields ?? const <String, dynamic>{}),
+        ...(files ?? const <String, MultipartFile>{}),
+      };
+
+      final formData = FormData.fromMap(formMap);
+
+      final response = await _dio
+          .post<String>(
+            '$base$endpoint',
+            data: formData,
+            options: Options(headers: multipartHeaders),
+          )
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw ApiException('Request timeout'),
+          );
 
       return _handleResponse(response);
     } on ApiException {
@@ -201,14 +258,16 @@ class ApiService {
   static Future<dynamic> put(String endpoint, dynamic data) async {
     try {
       final headers = await getHeaders();
-      final response = await http.put(
-        Uri.parse('$baseUrl$endpoint'),
-        headers: headers,
-        body: jsonEncode(data),
-      ).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => throw ApiException('Request timeout'),
-      );
+      final response = await _dio
+          .put<String>(
+            '$baseUrl$endpoint',
+            data: jsonEncode(data),
+            options: Options(headers: headers),
+          )
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw ApiException('Request timeout'),
+          );
 
       return _handleResponse(response);
     } on ApiException {
@@ -222,13 +281,15 @@ class ApiService {
   static Future<dynamic> delete(String endpoint) async {
     try {
       final headers = await getHeaders();
-      final response = await http.delete(
-        Uri.parse('$baseUrl$endpoint'),
-        headers: headers,
-      ).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => throw ApiException('Request timeout'),
-      );
+      final response = await _dio
+          .delete<String>(
+            '$baseUrl$endpoint',
+            options: Options(headers: headers),
+          )
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw ApiException('Request timeout'),
+          );
 
       return _handleResponse(response);
     } on ApiException {
@@ -239,16 +300,17 @@ class ApiService {
   }
 
   /// Handle HTTP response and error codes
-  static dynamic _handleResponse(http.Response response) {
+  static dynamic _handleResponse(Response<String> response) {
     try {
-      final statusCode = response.statusCode;
+      final statusCode = response.statusCode ?? 500;
+      final bodyText = response.data ?? '';
 
       // Update API version/deprecation signals for UI
-      ApiVersionNotifier.instance.updateFromHeaders(response.headers);
+  ApiVersionNotifier.instance.updateFromHeaders(_flattenHeaders(response.headers));
 
       if (statusCode >= 200 && statusCode < 300) {
-        if (response.body.isEmpty) return null;
-        final body = jsonDecode(response.body);
+        if (bodyText.isEmpty) return null;
+        final body = jsonDecode(bodyText);
         // Support several common envelope shapes so callers don't need to
         // repeatedly check for `data` / `content` fields.
         if (body is Map) {
@@ -292,19 +354,31 @@ class ApiService {
     }
   }
 
+  static Map<String, String> _flattenHeaders(Headers headers) {
+    final result = <String, String>{};
+    headers.map.forEach((key, values) {
+      if (values.isNotEmpty) {
+        result[key] = values.join(',');
+      }
+    });
+    return result;
+  }
+
   /// Extract error message from response
-  static String _getErrorMessage(http.Response response) {
+  static String _getErrorMessage(Response<String> response) {
     try {
-      final data = jsonDecode(response.body);
+      final bodyText = response.data ?? '';
+      if (bodyText.isEmpty) return 'Unknown error';
+      final data = jsonDecode(bodyText);
       if (data is Map && data.containsKey('message')) {
         return data['message'] ?? 'Unknown error';
       }
       if (data is Map && data.containsKey('error')) {
         return data['error'] ?? 'Unknown error';
       }
-      return response.body;
+      return bodyText;
     } catch (_) {
-      return response.body;
+      return response.data ?? 'Unknown error';
     }
   }
 

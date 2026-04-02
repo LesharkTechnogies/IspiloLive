@@ -1,56 +1,60 @@
-import 'dart:async';
-import '../unread_message_service.dart';
+import 'package:ispilo/core/services/message_service.dart' as message_api;
+import 'package:ispilo/model/message_model.dart' show ConversationModel, MessageModel;
 
-/// Mock conversation service — in a real app, this would query your backend
-/// for an existing conversation between current user and target seller, or create one.
+/// Production conversation service adapter used by chat/product UI.
+///
+/// It wraps `MessageService` so existing screens can keep their current
+/// method calls while using backend data (not mock storage).
 class ConversationService {
   ConversationService._internal();
 
   static final ConversationService instance = ConversationService._internal();
-
-  // Mock storage: conversationId -> map
-  final Map<String, Map<String, dynamic>> _conversations = {};
-  // Mock messages storage: conversationId -> list of messages
-  final Map<String, List<Map<String, dynamic>>> _messages = {};
 
   Future<Map<String, dynamic>> getOrCreateConversation({
     required String sellerId,
     required String sellerName,
     required String sellerAvatar,
   }) async {
-    // simulate network delay
-    await Future.delayed(const Duration(milliseconds: 200));
+    // Backend contract for "find existing private conversation" is not exposed
+    // here, so we create a private conversation with seller participant and
+    // rely on backend deduplication policy if available.
+  final created = await message_api.MessageService.createConversation(
+      name: sellerName,
+      participantIds: [sellerId],
+      isGroup: false,
+    );
 
-    final convId = 'conv_$sellerId';
-    _conversations.putIfAbsent(
-        convId,
-        () => {
-              'id': convId,
-              'name': sellerName,
-              'avatar': sellerAvatar,
-              'sellerId': sellerId,
-              'isOnline': false,
-              'isVerified': false,
-              'unreadCount': 0,
-            });
+    if (created != null) {
+      return _conversationToUiMap(created, fallbackAvatar: sellerAvatar);
+    }
 
-    _messages.putIfAbsent(convId, () => <Map<String, dynamic>>[]);
-
-    return _conversations[convId]!;
+    // Safe fallback map shape expected by ChatPage/app routes.
+    return {
+      'id': 'conv_$sellerId',
+      'name': sellerName,
+      'avatar': sellerAvatar,
+      'sellerId': sellerId,
+      'isOnline': false,
+      'isVerified': false,
+      'unreadCount': 0,
+      'encryptionKey': null,
+    };
   }
 
   /// Fetch messages for a conversation (most recent first)
-  Future<List<Map<String, dynamic>>> fetchMessages(String conversationId,
-      {int limit = 50}) async {
-    await Future.delayed(const Duration(milliseconds: 150));
-    final msgs = _messages[conversationId] ?? <Map<String, dynamic>>[];
-    // return a copy with the most recent first, limited
-    final result = List<Map<String, dynamic>>.from(msgs.reversed);
-    if (result.length > limit) return result.sublist(0, limit);
-    return result;
+  Future<List<Map<String, dynamic>>> fetchMessages(
+    String conversationId, {
+    int limit = 50,
+  }) async {
+  final messages = await message_api.MessageService.getMessages(
+      conversationId,
+      size: limit,
+    );
+
+    return messages.map(_messageToUiMap).toList();
   }
 
-  /// Send a message into a conversation; increments unread counters for recipients
+  /// Send a message into a conversation
   Future<Map<String, dynamic>> sendMessage({
     required String conversationId,
     required String senderId,
@@ -60,61 +64,92 @@ class ConversationService {
     String? documentName,
     int? durationMs,
   }) async {
-    if ((text == null || text.trim().isEmpty) &&
-        (mediaPath == null || mediaPath.isEmpty)) {
-      throw ArgumentError('Either text or mediaPath must be provided');
+    final messageType = _toMessageType(mediaType);
+
+  final sent = await message_api.MessageService.sendMessage(
+      conversationId: conversationId,
+      content: text ?? '',
+      messageType: messageType,
+    );
+
+    if (sent == null) {
+      throw Exception('Failed to send message');
     }
 
-    await Future.delayed(const Duration(milliseconds: 120));
-
-    final msgId = 'msg_${DateTime.now().millisecondsSinceEpoch}';
-    final resolvedType = mediaType ?? (text != null ? 'text' : null);
-    final message = {
-      'id': msgId,
-      'conversationId': conversationId,
-      'senderId': senderId,
-      'text': text,
+    return {
+      ..._messageToUiMap(sent),
+      // Keep optional media-related fields for compatibility with current UI.
       'mediaPath': mediaPath,
-      'mediaType': resolvedType,
       'documentName': documentName,
       'durationMs': durationMs,
-      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'mediaType': mediaType ?? messageType.name,
     };
-
-    _messages.putIfAbsent(conversationId, () => <Map<String, dynamic>>[]);
-    _messages[conversationId]!.add(message);
-
-    // Update conversation lastMessage and increment unread
-    final conv = _conversations[conversationId];
-    if (conv != null) {
-      conv['lastMessage'] = message;
-      conv['unreadCount'] = (conv['unreadCount'] as int? ?? 0) + 1;
-      // Increment global unread counter as a simple simulation
-      UnreadMessageService.instance.increment(1);
-    }
-
-    return message;
   }
 
-  /// Mark a conversation as read for a user: decrement global unread by this conv's unreadCount and clear it
-  Future<void> markConversationRead(
-      String conversationId, String userId) async {
-    await Future.delayed(const Duration(milliseconds: 80));
-    final conv = _conversations[conversationId];
-    if (conv == null) return;
-    final int convUnread = conv['unreadCount'] as int? ?? 0;
-    if (convUnread > 0) {
-      // decrement global unread (ensure non-negative)
-      final remaining = UnreadMessageService.instance.count - convUnread;
-      UnreadMessageService.instance.count = remaining < 0 ? 0 : remaining;
-      conv['unreadCount'] = 0;
+  Future<void> markConversationRead(String conversationId, String userId) {
+    return message_api.MessageService.markConversationAsRead(conversationId);
+  }
+
+  Future<Map<String, dynamic>?> getConversationById(String conversationId) async {
+  final conversation = await message_api.MessageService.getConversationById(conversationId);
+    if (conversation == null) return null;
+    return _conversationToUiMap(conversation);
+  }
+
+  static message_api.MessageType _toMessageType(String? type) {
+    switch ((type ?? 'text').toLowerCase()) {
+      case 'image':
+        return message_api.MessageType.image;
+      case 'video':
+        return message_api.MessageType.video;
+      case 'file':
+      case 'document':
+        return message_api.MessageType.file;
+      case 'location':
+        return message_api.MessageType.location;
+      case 'text':
+      default:
+        return message_api.MessageType.text;
     }
   }
 
-  /// Return conversation by id
-  Future<Map<String, dynamic>?> getConversationById(
-      String conversationId) async {
-    await Future.delayed(const Duration(milliseconds: 80));
-    return _conversations[conversationId];
+  static Map<String, dynamic> _messageToUiMap(MessageModel message) {
+    return {
+      'id': message.id,
+      'conversationId': message.conversationId,
+      'senderId': message.senderId,
+      'text': message.content,
+      'mediaPath': message.mediaUrl,
+      'mediaType': message.type.name,
+      'documentName': null,
+      'durationMs': null,
+      'timestamp': message.timestamp.toUtc().toIso8601String(),
+      'isRead': message.isRead,
+    };
+  }
+
+  static Map<String, dynamic> _conversationToUiMap(
+    ConversationModel conversation, {
+    String? fallbackAvatar,
+  }) {
+    final firstParticipant =
+        conversation.participants.isNotEmpty ? conversation.participants.first : null;
+
+    return {
+      'id': conversation.id,
+      'userId': conversation.id,
+      'name': conversation.name.isNotEmpty
+          ? conversation.name
+          : (firstParticipant?.name ?? 'Conversation'),
+      'avatar': firstParticipant?.avatar ?? fallbackAvatar,
+      'lastMessage': conversation.lastMessage,
+      'timestamp': conversation.lastMessageTime.toLocal().toString(),
+      'isOnline': firstParticipant?.isOnline ?? false,
+      'unreadCount': conversation.unreadCount,
+      'isVerified': false,
+      'isGroup': conversation.isGroup,
+      'encryptionKey': conversation.encryptionKey,
+      'participants': conversation.participants.map((p) => p.toJson()).toList(),
+    };
   }
 }

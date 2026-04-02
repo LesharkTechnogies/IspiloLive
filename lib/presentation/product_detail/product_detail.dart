@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/services/seller_service.dart';
 import '../../core/services/conversation_service.dart';
@@ -29,7 +28,6 @@ class _ProductDetailState extends State<ProductDetail> {
   bool _isSaved = false;
   bool _loading = false;
   String? _hudError;
-  VoidCallback? _hudRetryAction;
   Map<String, dynamic>? _productData;
   List<Map<String, dynamic>> _relatedProducts = [];
   String? _productId;
@@ -121,7 +119,6 @@ class _ProductDetailState extends State<ProductDetail> {
   void _setError(String error) {
     setState(() {
       _hudError = error;
-      _hudRetryAction = _loadProductData;
     });
   }
 
@@ -311,120 +308,6 @@ class _ProductDetailState extends State<ProductDetail> {
       ],
     );
   }
-
-
-
-  Widget _buildContactOptions(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: colorScheme.onSurface.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            'Contact Seller',
-            style: GoogleFonts.inter(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 24),
-          ListTile(
-            leading: CustomIconWidget(
-              iconName: 'chat_bubble_outline',
-              color: colorScheme.primary,
-              size: 24,
-            ),
-            title: Text(
-              'Send Message',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-                color: colorScheme.onSurface,
-              ),
-            ),
-            subtitle: Text(
-              'Chat with NetworkPro Solutions',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                color: colorScheme.onSurface.withValues(alpha: 0.6),
-              ),
-            ),
-            onTap: () async {
-              Navigator.pop(context);
-              await _openMessagingWithSeller();
-            },
-          ),
-          ListTile(
-            leading: CustomIconWidget(
-              iconName: 'whatsapp',
-              color: const Color(0xFF25D366), // WhatsApp green
-              size: 24,
-            ),
-            title: Text(
-              'WhatsApp',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-                color: colorScheme.onSurface,
-              ),
-            ),
-            subtitle: Text(
-              'Chat via WhatsApp',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                color: colorScheme.onSurface.withValues(alpha: 0.6),
-              ),
-            ),
-            onTap: () async {
-              Navigator.pop(context);
-              await _openWhatsAppWithSeller();
-            },
-          ),
-          ListTile(
-            leading: CustomIconWidget(
-              iconName: 'phone',
-              color: colorScheme.primary,
-              size: 24,
-            ),
-            title: Text(
-              'Call Seller',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-                color: colorScheme.onSurface,
-              ),
-            ),
-            subtitle: Text(
-              '+1 (555) 123-4567',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                color: colorScheme.onSurface.withValues(alpha: 0.6),
-              ),
-            ),
-            onTap: () async {
-              Navigator.pop(context);
-              await _callSellerWithSeller();
-            },
-          ),
-          const SizedBox(height: 16),
-        ],
-      ),
-    );
-  }
-
   Future<void> _openMessagingWithSeller() async {
     _setLoading(true);
 
@@ -500,7 +383,6 @@ class _ProductDetailState extends State<ProductDetail> {
       _setLoading(false);
       setState(() {
         _hudError = 'Seller phone number not available.';
-        _hudRetryAction = () => _callSellerWithSeller();
       });
       return;
     }
@@ -509,7 +391,6 @@ class _ProductDetailState extends State<ProductDetail> {
       _setLoading(false);
       setState(() {
         _hudError = 'Seller phone number is private.';
-        _hudRetryAction = () => _callSellerWithSeller();
       });
       return;
     }
@@ -567,7 +448,6 @@ class _ProductDetailState extends State<ProductDetail> {
       _setLoading(false);
       setState(() {
         _hudError = 'Seller phone number not available.';
-        _hudRetryAction = () => _openWhatsAppWithSeller();
       });
       return;
     }
@@ -576,7 +456,6 @@ class _ProductDetailState extends State<ProductDetail> {
       _setLoading(false);
       setState(() {
         _hudError = 'Seller phone number is private.';
-        _hudRetryAction = () => _openWhatsAppWithSeller();
       });
       return;
     }
@@ -714,7 +593,6 @@ class _ProductDetailState extends State<ProductDetail> {
 
     final seller = _productData!['seller'] as Map<String, dynamic>?;
     final sellerId = seller?['id'] as String?;
-    final sellerName = seller?['name'] as String? ?? 'Seller';
 
     if (sellerId == null || sellerId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -723,12 +601,7 @@ class _ProductDetailState extends State<ProductDetail> {
       return;
     }
 
-    // Navigate to messages with seller
-    Navigator.pushNamed(
-      context,
-      '/messages',
-      arguments: {'userId': sellerId, 'userName': sellerName},
-    );
+    _openMessagingWithSeller();
   }
 
   void _makeOffer() {

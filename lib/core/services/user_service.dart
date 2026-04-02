@@ -21,6 +21,21 @@ class UserService {
     return response ?? {};
   }
 
+  /// GET /users/{userId}
+  /// Returns public/non-sensitive profile details for another user.
+  static Future<Map<String, dynamic>> getUserProfileById(String userId) async {
+    if (userId.trim().isEmpty) return {};
+
+    try {
+      final response = await ApiService.get('/users/$userId');
+      return response ?? {};
+    } catch (_) {
+      // Backward-compatible fallback for older backend contracts.
+      final fallback = await ApiService.get('/users/$userId/profile');
+      return fallback ?? {};
+    }
+  }
+
   /// GET /users/me/preferences
   static Future<Map<String, dynamic>> getUserPreferences() async {
     final response = await ApiService.get('/users/me/preferences');
