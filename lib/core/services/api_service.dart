@@ -8,9 +8,9 @@ import 'api_version_notifier.dart';
 
 class ApiService {
   // Use the Heroku URL for production (API prefix v1 per API contract)
-  static const String baseUrl = 'https://ispilo-backend-32613e7af752.herokuapp.com/api/v1';
+  static const String baseUrl = 'https://ispilo.hantardev.tech/api/v1';
   // Legacy/alias base (non-versioned) for endpoints not yet versioned, e.g., auth
-  static const String aliasBaseUrl = 'https://ispilo-backend-32613e7af752.herokuapp.com/api';
+  static const String aliasBaseUrl = 'https://ispilo.hantardev.tech/api';
 
   static final Dio _dio = Dio(
     BaseOptions(
@@ -57,6 +57,15 @@ class ApiService {
     return resp is Map<String, dynamic> ? resp : null;
   }
 
+  /// Update FCM Token to Backend
+  static Future<void> updateFcmToken(String fcmToken) async {
+    try {
+      await put('/users/fcm-token', {'fcmToken': fcmToken});
+    } catch (e) {
+      debugPrint('Failed to update FCM token: $e');
+    }
+  }
+
   static String _platformLabel() {
     if (kIsWeb) return 'web';
     if (defaultTargetPlatform == TargetPlatform.android) return 'android';
@@ -90,11 +99,7 @@ class ApiService {
   }
 
   static void _logRequest(String method, String url, Map<String, String> headers, dynamic body) {
-    debugPrint('[API] $method $url');
-    debugPrint('[API] Headers: ${headers.map((k, v) => MapEntry(k, v))}');
-    if (body != null) {
-      debugPrint('[API] Body: $body');
-    }
+    // Disabled general API logging to reduce console noise
   }
 
   /// GET request with error handling
@@ -122,6 +127,32 @@ class ApiService {
       rethrow;
     } catch (e) {
       throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  /// GET request with alias fallback (non-versioned base).
+  static Future<dynamic> getWithFallback(String endpoint) async {
+    try {
+      return await get(endpoint);
+    } on ApiException {
+      final headers = endpoint == '/app/version'
+          ? await getHeaders(includeAuth: false)
+          : await getHeaders();
+
+      final url = '$aliasBaseUrl$endpoint';
+      _logRequest('GET', url, headers, null);
+
+      final response = await _dio
+          .get<String>(
+            url,
+            options: Options(headers: headers),
+          )
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw ApiException('Request timeout'),
+          );
+
+      return _handleResponse(response);
     }
   }
 

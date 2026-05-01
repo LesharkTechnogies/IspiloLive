@@ -2,8 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+// import 'package:firebase_messaging/firebase_messaging.dart'; // Uncomment after adding to pubspec.yaml
 import 'package:ispilo/model/notification_model.dart';
-
 /// Notification service for managing notifications
 class NotificationService {
   static const String _notificationCacheKey = 'cached_notifications';
@@ -219,6 +219,66 @@ class NotificationService {
       await getNotificationSummary();
     });
   }
+
+  // ============================================================================
+  // PUSH NOTIFICATIONS (FCM) INTEGRATION
+  // Based on Backend Specs: NEW_POST and GROUP_POST with targetId deep linking
+  // ============================================================================
+  
+  /*
+  /// Initializes Firebase Cloud Messaging to listen for push notifications
+  /// Call this inside your main.dart after Firebase.initializeApp()
+  static Future<void> setupPushNotifications(GlobalKey<NavigatorState> navigatorKey) async {
+    try {
+      final messaging = FirebaseMessaging.instance;
+      
+      // Request permissions (primarily for iOS)
+      await messaging.requestPermission(alert: true, badge: true, sound: true);
+
+      // Get FCM token and register it with your backend
+      final fcmToken = await messaging.getToken();
+      if (fcmToken != null) {
+        debugPrint('FCM Token: $fcmToken');
+        // await ApiService.post('/users/me/fcm-token', {'token': fcmToken});
+      }
+
+      // Handle foreground notifications (Refresh local notification center instantly)
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        debugPrint('Received foreground push notification: ${message.data}');
+        getNotificationSummary();
+        getNotifications(forceRefresh: true);
+      });
+
+      // Handle background/terminated deep links
+      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+        _handleNotificationDeepLink(message.data, navigatorKey);
+      });
+      
+      final initialMessage = await messaging.getInitialMessage();
+      if (initialMessage != null) {
+        _handleNotificationDeepLink(initialMessage.data, navigatorKey);
+      }
+    } catch (e) {
+      debugPrint('Error initializing FCM: $e');
+    }
+  }
+
+  static void _handleNotificationDeepLink(Map<String, dynamic> data, GlobalKey<NavigatorState> navigatorKey) {
+    final type = data['type']?.toString();
+    final targetId = data['targetId']?.toString();
+
+    if (type == null || targetId == null) return;
+    final context = navigatorKey.currentContext;
+    if (context == null) return;
+
+    if (type == 'NEW_POST') {
+      Navigator.pushNamed(context, '/post-content', arguments: {'postId': targetId});
+    } else if (type == 'GROUP_POST') {
+      // As per backend spec, navigate to the group's feed
+      Navigator.pushNamed(context, '/group-profile', arguments: {'groupId': targetId});
+    }
+  }
+  */
 
   /// Cache notifications locally
   static Future<void> _cacheNotifications(List<NotificationModel> notifications) async {

@@ -3,7 +3,6 @@ import 'package:sizer/sizer.dart';
 import 'package:ispilo/model/product_model.dart';
 import 'package:ispilo/model/seller_model.dart';
 import 'package:ispilo/model/repository/product_repository.dart';
-import 'package:ispilo/core/services/conversation_service.dart';
 import '../../core/services/seller_service.dart';
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
@@ -500,17 +499,21 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
       return;
     }
 
-    final conversation = await ConversationService.instance.getOrCreateConversation(
-      sellerId: sellerSnapshot.id,
-      sellerName: sellerSnapshot.businessName,
-      sellerAvatar: sellerSnapshot.businessLogo ?? '',
-    );
-
     if (!mounted) return;
     Navigator.pushNamed(
       context,
       '/chat',
-      arguments: conversation,
+      arguments: {
+        'id': 'conv_${sellerSnapshot.id}',
+        'userId': sellerSnapshot.id,
+        'name': sellerSnapshot.businessName,
+        'avatar': sellerSnapshot.businessLogo ?? '',
+        'isOnline': false,
+        'isVerified': false,
+        'isGroup': false,
+        'unreadCount': 0,
+        'encryptionKey': null,
+      },
     );
   }
 }

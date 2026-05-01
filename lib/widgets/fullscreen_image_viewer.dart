@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import 'dart:async';
 import 'package:share_plus/share_plus.dart';
 import 'dart:math' as math;
+import 'package:permission_handler/permission_handler.dart';
+import '../core/services/media_download_service.dart';
 
 /// Simple full-screen image viewer overlay.
 /// Use `showDialog` with this widget to display a full-screen image that can be dismissed by tapping or swiping down.
@@ -118,34 +120,9 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer>
                           icon: Icons.file_download,
                           label: 'Download',
                           onTap: () async {
-                            final scaffold = ScaffoldMessenger.of(context);
-                            final savedPath = await _downloadImageWithWatermark(
-                                widget.imageUrl, 'ispilo');
-                            if (!mounted) return;
-                            if (savedPath != null && savedPath.isNotEmpty) {
-                              scaffold.showSnackBar(
-                                SnackBar(
-                                  content: Text('Saved to: $savedPath'),
-                                  action: SnackBarAction(
-                                    label: 'Undo',
-                                    onPressed: () async {
-                                      try {
-                                        final f = File(savedPath);
-                                        if (await f.exists()) {
-                                          await f.delete();
-                                          scaffold.showSnackBar(const SnackBar(
-                                              content: Text('Save undone')));
-                                        }
-                                      } catch (_) {}
-                                    },
-                                  ),
-                                ),
-                              );
-                            } else {
-                              scaffold.showSnackBar(
-                                  const SnackBar(
-                                      content: Text('Failed to save image')));
-                            }
+                            final ext = widget.imageUrl.split('.').last.split('?').first;
+                            final fileName = 'ispilo_image_${DateTime.now().millisecondsSinceEpoch}.${ext.isEmpty ? 'jpg' : ext}';
+                            await MediaDownloadService.downloadFile(widget.imageUrl, fileName, context);
                           },
                         ),
                         const SizedBox(width: 12),
@@ -281,15 +258,31 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer>
       if (byteData == null) return null;
       final pngBytes = byteData.buffer.asUint8List();
 
-      // Save locally under app documents (no external gallery plugin to avoid build issues)
+      // Save locally under public Downloads on Android
+      Directory? dir;
+      if (Platform.isAndroid) {
+        var status = await Permission.storage.status;
+        if (!status.isGranted) {
+          await Permission.storage.request();
+        }
+        dir = Directory('/storage/emulated/0/Download/Ispilo');
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+      } else {
+        final docDir = await getApplicationDocumentsDirectory();
+        dir = Directory('${docDir.path}/Ispilo');
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+      }
 
-      final dir = await getApplicationDocumentsDirectory();
       final rawName = uri.pathSegments.isNotEmpty
           ? uri.pathSegments.last
           : 'image_${DateTime.now().millisecondsSinceEpoch}.png';
       final fileName =
           'ispilo_${DateTime.now().millisecondsSinceEpoch}_$rawName.png';
-      final file = File('${dir.path}/$fileName');
+      final file = File('${dir!.path}/$fileName');
       await file.writeAsBytes(pngBytes);
       return file.path;
     } catch (e) {

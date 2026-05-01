@@ -5,6 +5,23 @@ import 'package:dio/dio.dart';
 class UserRepository {
   static const String _baseEndpoint = '/users';
 
+  static List<dynamic> _extractList(dynamic response) {
+    if (response is List) return response;
+    if (response is Map<String, dynamic>) {
+      final direct = response['content'] ??
+          response['data'] ??
+          response['items'] ??
+          response['users'] ??
+          response['results'];
+      if (direct is List) return direct;
+      if (direct is Map<String, dynamic>) {
+        final nested = direct['content'] ?? direct['data'] ?? direct['items'];
+        if (nested is List) return nested;
+      }
+    }
+    return const <dynamic>[];
+  }
+
   /// Get current logged-in user
   static Future<Map<String, dynamic>> getCurrentUser() async {
     try {
@@ -48,6 +65,75 @@ class UserRepository {
     } catch (e) {
       throw Exception('Failed to fetch user stats: $e');
     }
+  }
+
+  /// Get followers list for a user
+  static Future<List<Map<String, dynamic>>> getFollowersById(String userId) async {
+    final endpoints = <String>[
+      '$_baseEndpoint/$userId/followers',
+      '$_baseEndpoint/$userId/followers?page=0&size=50',
+    ];
+
+    for (final endpoint in endpoints) {
+      try {
+        final response = await ApiService.get(endpoint);
+        final raw = _extractList(response);
+        return raw
+            .whereType<Map>()
+            .map((item) => item.cast<String, dynamic>())
+            .toList(growable: false);
+      } catch (_) {
+        // Try next endpoint.
+      }
+    }
+
+    return const <Map<String, dynamic>>[];
+  }
+
+  /// Get following list for a user
+  static Future<List<Map<String, dynamic>>> getFollowingById(String userId) async {
+    final endpoints = <String>[
+      '$_baseEndpoint/$userId/following',
+      '$_baseEndpoint/$userId/following?page=0&size=50',
+    ];
+
+    for (final endpoint in endpoints) {
+      try {
+        final response = await ApiService.get(endpoint);
+        final raw = _extractList(response);
+        return raw
+            .whereType<Map>()
+            .map((item) => item.cast<String, dynamic>())
+            .toList(growable: false);
+      } catch (_) {
+        // Try next endpoint.
+      }
+    }
+
+    return const <Map<String, dynamic>>[];
+  }
+
+  /// Get mutual connections list for a user
+  static Future<List<Map<String, dynamic>>> getConnectionsById(String userId) async {
+    final endpoints = <String>[
+      '$_baseEndpoint/$userId/connections',
+      '$_baseEndpoint/$userId/connections?page=0&size=50',
+    ];
+
+    for (final endpoint in endpoints) {
+      try {
+        final response = await ApiService.get(endpoint);
+        final raw = _extractList(response);
+        return raw
+            .whereType<Map>()
+            .map((item) => item.cast<String, dynamic>())
+            .toList(growable: false);
+      } catch (_) {
+        // Try next endpoint.
+      }
+    }
+
+    return const <Map<String, dynamic>>[];
   }
 
   /// Get user preferences/settings

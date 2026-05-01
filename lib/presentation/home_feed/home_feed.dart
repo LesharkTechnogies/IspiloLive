@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
@@ -6,10 +7,11 @@ import 'package:sizer/sizer.dart';
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
 import '../../widgets/profile_avatar.dart';
+import '../../widgets/fullscreen_image_viewer.dart';
 import '../../model/social_model.dart';
 import '../../model/repository/social_repository.dart';
-import '../../core/services/conversation_service.dart';
 import 'widgets/create_post_bottom_sheet.dart';
+import '../../core/services/media_download_service.dart';
 
 class HomeFeed extends StatefulWidget {
   const HomeFeed({super.key});
@@ -19,10 +21,19 @@ class HomeFeed extends StatefulWidget {
 }
 
 class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
+  // Runtime-only cache: survives widget rebuild/navigation while app is alive.
+  static bool _hasBootstrappedOnce = false;
+  static List<PostModel> _cachedPosts = <PostModel>[];
+  static Set<String> _cachedSeenPostIds = <String>{};
+  static List<UserModel> _cachedSuggestions = <UserModel>[];
+  static List<Map<String, dynamic>> _cachedGroups = <Map<String, dynamic>>[];
+  static int _cachedPage = 0;
+  static bool _cachedHasMorePosts = true;
+
   final ScrollController _scrollController = ScrollController();
   final Set<String> _expandedPostIds = <String>{};
 
-  bool _isLoading = false;
+  bool _isLoading = true;
   bool _hasMorePosts = true;
   int _currentBottomIndex = 0;
   int _page = 0;
@@ -34,9 +45,12 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
   // Feed data
   final List<PostModel> _posts = [];
   final Set<String> _seenPostIds = <String>{};
+  final List<_FeedEntry> _feedEntries = <_FeedEntry>[];
 
   // Suggestions (users to follow)
   List<UserModel> _friendSuggestions = [];
+  List<Map<String, dynamic>> _groups = [];
+  Timer? _backgroundResyncTimer;
 
   // Ads (can be fetched from API later). Each ad contains: title, image, advertiserId, cta
   final List<Map<String, dynamic>> _adsPool = [
@@ -60,7 +74,38 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    _restoreFromRuntimeCache();
     _initUserAndLoad();
+    _startBackgroundResync();
+  }
+
+  void _restoreFromRuntimeCache() {
+    if (_cachedPosts.isNotEmpty) {
+      _posts
+        ..clear()
+        ..addAll(_cachedPosts);
+      _seenPostIds
+        ..clear()
+        ..addAll(_cachedSeenPostIds);
+      _friendSuggestions = List<UserModel>.from(_cachedSuggestions);
+      _groups = List<Map<String, dynamic>>.from(_cachedGroups);
+      _page = _cachedPage;
+      _hasMorePosts = _cachedHasMorePosts;
+      _isLoading = false;
+      _rebuildFeedEntries();
+    } else {
+      // Show skeleton only before first successful feed bootstrap in app runtime.
+      _isLoading = !_hasBootstrappedOnce;
+    }
+  }
+
+  void _updateRuntimeCache() {
+    _cachedPosts = List<PostModel>.from(_posts);
+    _cachedSeenPostIds = Set<String>.from(_seenPostIds);
+    _cachedSuggestions = List<UserModel>.from(_friendSuggestions);
+    _cachedGroups = List<Map<String, dynamic>>.from(_groups);
+    _cachedPage = _page;
+    _cachedHasMorePosts = _hasMorePosts;
   }
 
   Future<void> _initUserAndLoad() async {
@@ -71,14 +116,79 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
     } catch (_) {
       _isPremium = false;
     }
-    await _loadInitialPosts();
-    await _loadSuggestions();
+    if (_posts.isEmpty) {
+      await _loadInitialPosts(showSkeleton: !_hasBootstrappedOnce);
+      await _loadSuggestions();
+    } else {
+      // Already hydrated from cache: skip background resync to prevent auto-reloads.
+      // The user will tap the logo or pull to refresh to update the feed.
+      unawaited(_loadSuggestions());
+    }
   }
 
   @override
   void dispose() {
+    _backgroundResyncTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _startBackgroundResync() {
+    _backgroundResyncTimer?.cancel();
+    _backgroundResyncTimer = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) => _resyncAppDataInBackground(),
+    );
+  }
+
+  Future<void> _resyncAppDataInBackground() async {
+    if (!mounted || _isLoading) return;
+
+    try {
+      final results = await Future.wait([
+        PostRepository.getFeed(page: 0, size: _pageSize),
+        PostRepository.getGroupFeed(page: 0, size: _pageSize),
+      ]);
+      final latestPosts = results[0];
+      final latestGroupPosts = results[1];
+      final combinedLatest = [...latestPosts, ...latestGroupPosts];
+      final latestSuggestions =
+          await UserRepository.getUserSuggestions(page: 0, size: 10);
+      final latestGroups = await PostRepository.getGroups(page: 0, size: 10);
+
+      if (!mounted) return;
+
+      final currentById = <String, PostModel>{for (final p in _posts) p.id: p};
+      for (final post in latestPosts) {
+        currentById[post.id] = post;
+      }
+
+      final ordered = <PostModel>[];
+      final seen = <String>{};
+
+      for (final post in combinedLatest) {
+        if (seen.add(post.id)) ordered.add(currentById[post.id]!);
+      }
+      for (final post in _posts) {
+        if (seen.add(post.id)) ordered.add(currentById[post.id]!);
+      }
+
+      setState(() {
+        _posts
+          ..clear()
+          ..addAll(ordered);
+        _seenPostIds
+          ..clear()
+          ..addAll(_posts.map((p) => p.id));
+        _friendSuggestions = latestSuggestions;
+        _groups = latestGroups;
+        _rebuildFeedEntries();
+      });
+      _hasBootstrappedOnce = true;
+      _updateRuntimeCache();
+    } catch (e) {
+      debugPrint('Background resync failed: $e');
+    }
   }
 
   void _onScroll() {
@@ -90,15 +200,28 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _loadInitialPosts() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadInitialPosts({bool showSkeleton = false}) async {
+    if (showSkeleton) {
+      setState(() => _isLoading = true);
+    }
     try {
-      final posts = await PostRepository.getFeed(page: 0, size: _pageSize);
-      _appendUniquePosts(posts);
+      final results = await Future.wait([
+        PostRepository.getFeed(page: 0, size: _pageSize),
+        PostRepository.getGroupFeed(page: 0, size: _pageSize),
+      ]);
+      final posts = results[0];
+      final groupPosts = results[1];
+      _appendUniquePosts([...posts, ...groupPosts]);
+   
+      if (!mounted) return;
       setState(() {
         _page = 1;
-        _hasMorePosts = posts.length >= _pageSize;
+        _hasMorePosts = (posts.length + groupPosts.length) >= _pageSize;
+        _isLoading = false;
+        _rebuildFeedEntries();
       });
+      _hasBootstrappedOnce = true;
+      _updateRuntimeCache();
     } catch (e) {
       debugPrint('Error loading posts: $e');
       if (mounted) {
@@ -106,8 +229,9 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
           SnackBar(content: Text('Failed to load feed: $e')),
         );
       }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -116,16 +240,27 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
     setState(() => _isLoading = true);
 
     try {
-      final newPosts = await PostRepository.getFeed(page: _page, size: _pageSize);
+      final results = await Future.wait([
+        PostRepository.getFeed(page: _page, size: _pageSize),
+        PostRepository.getGroupFeed(page: _page, size: _pageSize),
+      ]);
+      final newPosts = results[0];
+      final newGroupPosts = results[1];
+      final combinedNewPosts = [...newPosts, ...newGroupPosts];
       final beforeAppendCount = _posts.length;
-      _appendUniquePosts(newPosts);
+      _appendUniquePosts(combinedNewPosts);
+      
+      if (!mounted) return;
       setState(() {
         _page++;
-        if (newPosts.length < _pageSize || _posts.length == beforeAppendCount) {
+        if (combinedNewPosts.length < _pageSize || _posts.length == beforeAppendCount) {
           // If fewer than page size returned or no new unique posts, assume end
           _hasMorePosts = false;
         }
+        _rebuildFeedEntries();
       });
+      _hasBootstrappedOnce = true;
+      _updateRuntimeCache();
     } catch (e) {
       debugPrint('Error loading more posts: $e');
       if (mounted) {
@@ -144,15 +279,44 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
         _posts.add(post);
       }
     }
+    _rebuildFeedEntries();
+  }
+
+  void _rebuildFeedEntries() {
+    _feedEntries
+      ..clear();
+
+    final shuffled = List<PostModel>.from(_posts);
+    shuffled.shuffle(Random());
+
+    var adIndex = 0;
+    for (var i = 0; i < shuffled.length; i++) {
+      if (!_isPremium && i > 0 && i % _adInterval == 0) {
+        final ad = _adsPool[adIndex % _adsPool.length];
+        _feedEntries.add(_FeedEntry.ad(ad));
+        adIndex++;
+      }
+      _feedEntries.add(_FeedEntry.post(shuffled[i]));
+    }
   }
 
   Future<void> _loadSuggestions() async {
     try {
       _friendSuggestions = await UserRepository.getUserSuggestions(page: 0, size: 10);
-      if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Error loading suggestions: $e');
     }
+
+    try {
+      _groups = await PostRepository.getGroups(page: 0, size: 10);
+    } catch (e) {
+      debugPrint('Error loading groups: $e');
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+    _updateRuntimeCache();
   }
 
   Future<void> _refreshFeed() async {
@@ -161,15 +325,37 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
       _isLoading = true;
       _hasMorePosts = true;
       _page = 0;
-      _posts.clear();
       _seenPostIds.clear();
     });
-    await _loadInitialPosts();
+
+    // Keep currently visible posts while refreshing to avoid skeleton flicker.
+    final latestPosts = await PostRepository.getFeed(page: 0, size: _pageSize);
+    if (!mounted) return;
+
+    setState(() {
+      _posts
+        ..clear()
+        ..addAll(latestPosts);
+      _seenPostIds
+        ..clear()
+        ..addAll(latestPosts.map((p) => p.id));
+      _page = 1;
+      _hasMorePosts = latestPosts.length >= _pageSize;
+      _isLoading = false;
+    });
+
+    _hasBootstrappedOnce = true;
+    _updateRuntimeCache();
     await _loadSuggestions();
   }
 
+  final Set<String> _likingPosts = <String>{};
+
   // Interactions
   Future<void> _toggleLike(PostModel post) async {
+    if (_likingPosts.contains(post.id)) return;
+    _likingPosts.add(post.id);
+
     try {
       final updatedPost = await PostRepository.toggleLikePost(post.id);
       final idx = _posts.indexWhere((p) => p.id == post.id);
@@ -180,6 +366,8 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
       }
     } catch (e) {
       debugPrint('Error toggling like: $e');
+    } finally {
+      _likingPosts.remove(post.id);
     }
   }
 
@@ -259,6 +447,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
           _posts.removeWhere((p) => p.id == post.id);
           _seenPostIds.remove(post.id);
         });
+        _updateRuntimeCache();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Post deleted successfully')),
@@ -343,7 +532,18 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: const CustomAppBar(title: 'ispilo'),
+      appBar: CustomAppBar(
+        title: 'ispilo',
+        isTitleLoading: _isLoading && _posts.isNotEmpty,
+        onTitleTap: () {
+          _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+          _refreshFeed();
+        },
+      ),
       body: RefreshIndicator(
         onRefresh: _refreshFeed,
         child: CustomScrollView(
@@ -359,8 +559,25 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
                     ),
             ),
 
+            // Groups to join
+            SliverToBoxAdapter(
+              child: _groups.isEmpty
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.h),
+                      child: _buildGroupsRow(colorScheme),
+                    ),
+            ),
+
             // Feed posts with ad slots
-            if (_posts.isEmpty && !_isLoading)
+            if (_posts.isEmpty && _isLoading)
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _buildPostSkeleton(colorScheme),
+                  childCount: 6,
+                ),
+              )
+            else if (_posts.isEmpty && !_isLoading)
               SliverFillRemaining(
                 hasScrollBody: false,
                 child: Center(
@@ -402,24 +619,18 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
               SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
-                  // Interleave ads at intervals, skip if premium
-                  if (!_isPremium && index > 0 && index % _adInterval == 0) {
-                    final ad = _adsPool[(index ~/ _adInterval - 1) % _adsPool.length];
-                    return _buildAdCard(colorScheme, ad);
+                  if (index >= _feedEntries.length) {
+                    return _buildPostSkeleton(colorScheme);
                   }
 
-                  final feedIndex = _isPremium
-                      ? index
-                      : index - (index ~/ _adInterval); // adjust index if ads are inserted
-
-                  if (feedIndex >= _posts.length) {
-                    return _buildLoading(colorScheme);
+                  final entry = _feedEntries[index];
+                  if (entry.isAd) {
+                    return _buildAdCard(colorScheme, entry.ad!);
                   }
 
-                  final post = _posts[feedIndex];
-                  return _buildPostCard(colorScheme, post);
+                  return _buildPostCard(colorScheme, entry.post!);
                 },
-                childCount: _posts.length + (_isLoading ? 1 : 0) + (_isPremium ? 0 : max(0, _posts.length ~/ _adInterval)),
+                childCount: _feedEntries.length + (_isLoading ? 1 : 0),
               ),
             ),
 
@@ -428,9 +639,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
               child: Padding(
                 padding: EdgeInsets.all(4.w),
                 child: Center(
-                  child: _isLoading
-                      ? const CircularProgressIndicator()
-                      : (!_hasMorePosts && _posts.isNotEmpty)
+                  child: (!_hasMorePosts && _posts.isNotEmpty)
                           ? Text(
                               'No more posts',
                               style: theme.textTheme.bodyMedium?.copyWith(
@@ -462,10 +671,80 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildLoading(ColorScheme colorScheme) {
+  Widget _buildPostSkeleton(ColorScheme colorScheme) {
     return Container(
-      padding: EdgeInsets.all(4.w),
-      child: const Center(child: CircularProgressIndicator()),
+      margin: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.h),
+      padding: EdgeInsets.all(3.w),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorScheme.outline.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: colorScheme.onSurface.withValues(alpha: 0.1),
+              ),
+              SizedBox(width: 2.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 10,
+                      width: 120,
+                      decoration: BoxDecoration(
+                        color: colorScheme.onSurface.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    SizedBox(height: 0.8.h),
+                    Container(
+                      height: 8,
+                      width: 80,
+                      decoration: BoxDecoration(
+                        color: colorScheme.onSurface.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 1.8.h),
+          Container(
+            height: 10,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: colorScheme.onSurface.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          SizedBox(height: 0.8.h),
+          Container(
+            height: 10,
+            width: 70.w,
+            decoration: BoxDecoration(
+              color: colorScheme.onSurface.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          SizedBox(height: 1.8.h),
+          Container(
+            height: 20.h,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: colorScheme.onSurface.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -555,12 +834,124 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildGroupsRow(ColorScheme colorScheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Suggested Groups', style: Theme.of(context).textTheme.titleMedium),
+            TextButton(
+              onPressed: () {},
+              child: const Text('See all'),
+            ),
+          ],
+        ),
+        SizedBox(
+          height: 20.h,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: _groups.length,
+            itemBuilder: (context, index) {
+              final group = _groups[index];
+              return Container(
+                width: 36.w,
+                margin: EdgeInsets.only(right: 3.w),
+                padding: EdgeInsets.all(2.w),
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: colorScheme.outline.withValues(alpha: 0.2)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(10),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  children: [
+                    CircleAvatar(
+                      radius: 28,
+                      backgroundColor: colorScheme.primaryContainer,
+                      backgroundImage: group['avatar'] != null && group['avatar'].toString().isNotEmpty 
+                        ? NetworkImage(group['avatar']) 
+                        : null,
+                      child: group['avatar'] == null || group['avatar'].toString().isEmpty
+                        ? Icon(Icons.group, color: colorScheme.onPrimaryContainer, size: 28)
+                        : null,
+                    ),
+                    SizedBox(height: 1.h),
+                    Text(
+                      group['name'] ?? 'Group',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    const Spacer(),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 4.h,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: () async {
+                          try {
+                            await PostRepository.joinGroup(group['id']?.toString() ?? '');
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Joined ${group['name']}')),
+                            );
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Failed to join: $e')),
+                            );
+                          }
+                        },
+                        child: const Text('Join'),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatPostTime(DateTime createdAt) {
+    final now = DateTime.now();
+    var diff = now.difference(createdAt);
+    if (diff.isNegative) {
+      diff = Duration.zero;
+    }
+
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+    if (diff.inHours < 24) return '${diff.inHours}h';
+    if (diff.inDays < 7) return '${diff.inDays}d';
+
+    final dt = createdAt;
+    return '${dt.day}/${dt.month}/${dt.year}';
+  }
+
   Widget _buildPostCard(ColorScheme colorScheme, PostModel post) {
     final textWidget = _buildExpandablePostText(post, colorScheme);
+    final topBorderColor = Theme.of(context).brightness == Brightness.dark ? Colors.lightGreen.shade800 : Colors.lightGreen.shade300;
 
     return Container(
       margin: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.h),
-      padding: EdgeInsets.all(3.w),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: colorScheme.surface,
         borderRadius: BorderRadius.circular(12),
@@ -575,32 +966,84 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
+          Container(
+            height: 4,
+            width: double.infinity,
+            color: topBorderColor,
+          ),
+          Padding(
+            padding: EdgeInsets.all(3.w),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
               // Avatar with privacy awareness
-              if (post.avatarPublic && post.userAvatar.isNotEmpty)
-                CircleAvatar(radius: 18, backgroundImage: NetworkImage(post.userAvatar))
-              else
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: colorScheme.outline.withValues(alpha: 0.2),
-                  child: Icon(Icons.person, color: colorScheme.onSurface.withValues(alpha: 0.6)),
-                ),
+              GestureDetector(
+                onTap: () {
+                  if (post.avatarPublic && post.userAvatar.isNotEmpty) {
+                    showDialog(
+                      context: context,
+                      builder: (_) => FullScreenImageViewer(
+                          imageUrl: post.userAvatar, heroTag: 'avatar_${post.id}_${post.userAvatar}'),
+                    );
+                  } else {
+                    Navigator.pushNamed(context, '/profile', arguments: {'userId': post.userId});
+                  }
+                },
+                child: post.avatarPublic && post.userAvatar.isNotEmpty
+                    ? CircleAvatar(radius: 18, backgroundImage: NetworkImage(post.userAvatar))
+                    : CircleAvatar(
+                        radius: 18,
+                        backgroundColor: colorScheme.primaryContainer,
+                        child: Text(
+                          post.username.isNotEmpty ? post.username[0].toUpperCase() : 'U',
+                          style: TextStyle(color: colorScheme.onPrimaryContainer, fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                      ),
+              ),
               SizedBox(width: 2.w),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Text(post.username, style: Theme.of(context).textTheme.titleSmall),
-                      if (_isPremium) ...[
-                        SizedBox(width: 1.w),
-                        Icon(Icons.check_circle, color: colorScheme.primary, size: 16),
-                      ],
-                    ]),
+                    GestureDetector(
+                      onTap: () => Navigator.pushNamed(context, '/profile', arguments: {'userId': post.userId}),
+                      child: Row(children: [
+                        Text(post.username, style: Theme.of(context).textTheme.titleSmall),
+                        if (_isPremium) ...[
+                          SizedBox(width: 1.w),
+                          Icon(Icons.check_circle, color: colorScheme.primary, size: 16),
+                        ],
+                      ]),
+                    ),
+                    if (post.isGroupPost && (post.groupName?.trim().isNotEmpty ?? false))
+                      Padding(
+                        padding: EdgeInsets.only(top: 0.2.h),
+                        child: GestureDetector(
+                          onTap: () {
+                            if (post.groupId != null && post.groupId!.isNotEmpty) {
+                              Navigator.pushNamed(context, '/group-profile', arguments: {
+                                'groupId': post.groupId,
+                                'groupName': post.groupName,
+                              });
+                            }
+                          },
+                          child: Text(
+                            'Group • ${post.groupName}',
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
                     Text(
-                      '${post.createdAt}',
+                      _formatPostTime(post.createdAt),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: colorScheme.onSurface.withValues(alpha: 0.6),
                           ),
@@ -690,7 +1133,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
           Row(
             children: [
               IconButton(
-                icon: Icon(post.isLiked ? Icons.favorite : Icons.favorite_border, color: post.isLiked ? Colors.red : null),
+                icon: Icon(post.isLiked ? Icons.favorite : Icons.favorite_border, color: post.isLiked ? Colors.lightGreen : null),
                 onPressed: () => _toggleLike(post),
               ),
               Text('${post.likesCount}'),
@@ -718,12 +1161,15 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
           ),
         ],
       ),
+    ),
+          ],
+        ),
     );
   }
 
   Future<void> _openMessageWithPostOwner(PostModel post) async {
-    final sellerId = post.userId;
-    if (sellerId.isEmpty) {
+    final targetUserId = post.userId;
+    if (targetUserId.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Unable to open chat for this user')),
@@ -731,25 +1177,22 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
       return;
     }
 
-    try {
-      final conversation = await ConversationService.instance.getOrCreateConversation(
-        sellerId: sellerId,
-        sellerName: post.username,
-        sellerAvatar: post.userAvatar,
-      );
-
-      if (!mounted) return;
-      Navigator.pushNamed(
-        context,
-        '/chat',
-        arguments: conversation,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to open chat: $e')),
-      );
-    }
+    if (!mounted) return;
+    Navigator.pushNamed(
+      context,
+      '/chat',
+      arguments: {
+        'id': 'conv_$targetUserId',
+        'userId': targetUserId,
+        'name': post.username,
+        'avatar': post.userAvatar,
+        'isOnline': false,
+        'isVerified': false,
+        'isGroup': false,
+        'unreadCount': 0,
+        'encryptionKey': null,
+      },
+    );
   }
 
   void _removeRepeatedPosts() {
@@ -762,6 +1205,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
     final removed = before - _posts.length;
     if (mounted) {
       setState(() {});
+      _updateRuntimeCache();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(removed > 0 ? 'Removed $removed repeated post(s)' : 'No repeated posts found')),
       );
@@ -862,6 +1306,24 @@ class _AdaptivePostMediaLayoutState extends State<AdaptivePostMediaLayout> {
     stream.addListener(listener);
   }
 
+  Widget _buildDownloadButton(BuildContext context, String url) {
+    return GestureDetector(
+      onTap: () async {
+        final ext = url.split('.').last.split('?').first;
+        final name = 'ispilo_post_image_${DateTime.now().millisecondsSinceEpoch}.${ext.isEmpty ? 'jpg' : ext}';
+        await MediaDownloadService.downloadFile(url, name, context);
+      },
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.5),
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(Icons.download, color: Colors.white, size: 16),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.imageUrl == null || widget.imageUrl!.isEmpty || _hasError) {
@@ -893,13 +1355,23 @@ class _AdaptivePostMediaLayoutState extends State<AdaptivePostMediaLayout> {
           SizedBox(height: 1.h),
           ConstrainedBox(
             constraints: BoxConstraints(maxHeight: 25.h), // avoid filling screen
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Image.network(
-                widget.imageUrl!,
-                fit: BoxFit.cover,
-                width: double.infinity,
-              ),
+            child: Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.network(
+                    widget.imageUrl!,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                  ),
+                ),
+                if (widget.imageUrl!.startsWith('http'))
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: _buildDownloadButton(context, widget.imageUrl!),
+                  ),
+              ],
             ),
           ),
         ],
@@ -913,17 +1385,41 @@ class _AdaptivePostMediaLayoutState extends State<AdaptivePostMediaLayout> {
           SizedBox(width: 3.w),
           Expanded(
             flex: 6,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Image.network(
-                widget.imageUrl!,
-                fit: BoxFit.cover,
-                height: 20.h, // constrained size
-              ),
+            child: Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.network(
+                    widget.imageUrl!,
+                    fit: BoxFit.cover,
+                    height: 20.h, // constrained size
+                    width: double.infinity,
+                  ),
+                ),
+                if (widget.imageUrl!.startsWith('http'))
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: _buildDownloadButton(context, widget.imageUrl!),
+                  ),
+              ],
             ),
           ),
         ],
       );
     }
   }
+}
+
+class _FeedEntry {
+  final PostModel? post;
+  final Map<String, dynamic>? ad;
+
+  const _FeedEntry._({this.post, this.ad});
+
+  bool get isAd => ad != null;
+
+  factory _FeedEntry.post(PostModel post) => _FeedEntry._(post: post);
+
+  factory _FeedEntry.ad(Map<String, dynamic> ad) => _FeedEntry._(ad: ad);
 }

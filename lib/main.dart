@@ -1,17 +1,49 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart'; // Add kIsWeb import
 import 'package:sizer/sizer.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import 'core/app_export.dart';
 import 'core/theme_provider.dart';
 import 'core/services/version_service.dart';
+import 'core/services/push_notification_service.dart';
 import 'widgets/custom_error_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:local_auth/local_auth.dart';
 
+final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase (Safely handling Web until flutterfire configure is run)
+  try {
+    if (kIsWeb) {
+      // For web, if you have FirebaseOptions from flutterfire configure, pass them here
+      // e.g., await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      // Using dummy options for now to prevent the 'FirebaseOptions cannot be null' crash:
+      await Firebase.initializeApp(
+        options: const FirebaseOptions(
+          apiKey: 'dummy-api-key',
+          appId: '1:1234567890:web:dummy',
+          messagingSenderId: 'dummy-sender-id',
+          projectId: 'dummy-project-id',
+        ),
+      );
+      print("Initialized Firebase with dummy options on Web.");
+    } else {
+      await Firebase.initializeApp();
+    }
+  } catch (e) {
+    print('Failed to initialize Firebase: $e');
+  }
+
+  // Initialize Push Notifications (Only if not on Web or if Firebase is properly configured on Web)
+  if (!kIsWeb) {
+    await PushNotificationService.initialize();
+  }
 
   // 🚨 CRITICAL: Custom error handling - DO NOT REMOVE
   ErrorWidget.builder = (FlutterErrorDetails details) {
@@ -39,7 +71,6 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   DateTime? _pausedTime;
   final LocalAuthentication _localAuth = LocalAuthentication();
-  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -75,7 +106,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // Only lock if biometric is enabled and user is logged in
       if (biometricEnabled && token != null && token.isNotEmpty) {
         // We push a biometric lock route
-        _navigatorKey.currentState?.push(
+        globalNavigatorKey.currentState?.push(
           MaterialPageRoute(
             fullscreenDialog: true,
             builder: (context) => BiometricLockScreen(localAuth: _localAuth),
@@ -93,7 +124,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         child: Consumer<ThemeProvider>(
           builder: (context, themeProvider, child) {
             return MaterialApp(
-              navigatorKey: _navigatorKey,
+              navigatorKey: globalNavigatorKey,
               title: 'Ispilo',
               theme: AppTheme.lightTheme,
               darkTheme: AppTheme.darkTheme,

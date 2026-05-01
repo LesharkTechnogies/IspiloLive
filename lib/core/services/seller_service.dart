@@ -136,21 +136,17 @@ class SellerService {
   /// Create seller profile using backend contract endpoint alias
   static Future<Seller?> createSellerProfile({
     required String businessName,
-    required String category,
-    String? description,
-    String? phone,
-    String? avatar,
+    required String businessDescription,
+    required String businessAddress,
   }) async {
     try {
       final payload = {
-        'name': businessName,
-        'category': category,
-        if (description != null) 'description': description,
-        if (phone != null) 'phone': phone,
-        if (avatar != null) 'avatar': avatar,
+        'businessName': businessName,
+        'businessDescription': businessDescription,
+        'businessAddress': businessAddress,
       };
 
-      final response = await ApiService.post('/sellers/', payload);
+      final response = await ApiService.post('/sellers', payload);
       return Seller.fromJson(response as Map<String, dynamic>);
     } catch (e) {
       debugPrint('Error creating seller profile: $e');

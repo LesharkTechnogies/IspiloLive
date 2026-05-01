@@ -1,14 +1,17 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // Added for kIsWeb
 import 'package:image_picker/image_picker.dart';
 import 'package:sizer/sizer.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import '../../core/services/cloudinary_service.dart';
 import '../../model/repository/social_repository.dart';
-import '../../model/social_model.dart';
-import '../../widgets/custom_bottom_bar.dart';
 import '../../core/services/user_service.dart';
+import '../../widgets/custom_bottom_bar.dart';
+import '../../core/services/media_download_service.dart';
+import '../../widgets/fullscreen_image_viewer.dart';
 
 class EditProfile extends StatefulWidget {
   const EditProfile({super.key});
@@ -18,12 +21,9 @@ class EditProfile extends StatefulWidget {
 }
 
 class _EditProfileState extends State<EditProfile> {
-  static const String _prefName = 'profile_name';
-  static const String _prefUsername = 'profile_username';
-  static const String _prefEmail = 'profile_email';
-  static const String _prefPhone = 'profile_phone';
-  static const String _prefBirthday = 'profile_birthday';
-  static const String _prefAvatarPath = 'profile_avatar_path';
+  static const String _prefAvatarUrl = 'pref_profile_avatar_url';
+  static const String _prefAvatarSyncState = 'pref_profile_avatar_sync_state';
+  static const String _prefPhoneNumber = 'pref_profile_phone';
 
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _nameCtrl = TextEditingController();
@@ -34,57 +34,116 @@ class _EditProfileState extends State<EditProfile> {
   final TextEditingController _townCtrl = TextEditingController();
   final TextEditingController _quoteCtrl = TextEditingController();
   bool _avatarPublic = true;
-  DateTime? _birthday;
   String? _avatarPath;
-  UserModel? _currentUser;
   bool _saving = false;
+  int _avatarSyncState = 0;
+
+  int _followers = 0;
+  int _following = 0;
+  int _connections = 0;
 
   final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
-    _loadProfile();
+    _loadFromPreferences();
     _loadFromBackend();
   }
 
-  Future<void> _loadProfile() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _nameCtrl.text = prefs.getString(_prefName) ?? '';
-      _usernameCtrl.text = prefs.getString(_prefUsername) ?? '';
-      _emailCtrl.text = prefs.getString(_prefEmail) ?? '';
-      _phoneCtrl.text = prefs.getString(_prefPhone) ?? '';
-      final birthdayMs = prefs.getInt(_prefBirthday);
-      if (birthdayMs != null) {
-        _birthday = DateTime.fromMillisecondsSinceEpoch(birthdayMs);
-      }
-      _avatarPath = prefs.getString(_prefAvatarPath);
-    });
+  Future<void> _loadFromPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedAvatarUrl = prefs.getString(_prefAvatarUrl);
+      final cachedSyncState = prefs.getInt(_prefAvatarSyncState) ?? 0;
+      final cachedPhone = prefs.getString(_prefPhoneNumber) ?? '';
+
+      if (!mounted) return;
+      setState(() {
+        _avatarSyncState = cachedSyncState;
+        if ((cachedAvatarUrl ?? '').isNotEmpty && (_avatarPath?.isEmpty ?? true)) {
+          _avatarPath = cachedAvatarUrl;
+        }
+        if (cachedPhone.isNotEmpty) {
+          _phoneCtrl.text = cachedPhone;
+        }
+      });
+    } catch (_) {
+      // Best effort only.
+    }
+  }
+
+  int _parseInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
   }
 
   Future<void> _loadFromBackend() async {
     try {
-      final response = await UserService.getCurrentUser();
-      
-      if (response.isNotEmpty) {
+      final stats = await UserService.getUserStats();
+      if (mounted) {
         setState(() {
-          _nameCtrl.text = response['name'] ?? response['firstName'] ?? _nameCtrl.text;
-          _emailCtrl.text = response['email'] ?? _emailCtrl.text;
-          _phoneCtrl.text = response['phone'] ?? _phoneCtrl.text;
-          _companyCtrl.text = response['company'] ?? response['county'] ?? _companyCtrl.text;
-          _townCtrl.text = response['town'] ?? response['location'] ?? _townCtrl.text;
-          _quoteCtrl.text = response['bio'] ?? response['quote'] ?? _quoteCtrl.text;
+          _followers = _parseInt(stats['followersCount'] ?? stats['followers']);
+          _following = _parseInt(stats['followingCount'] ?? stats['following']);
+          _connections = _parseInt(stats['connectionsCount'] ?? stats['connections']);
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load user stats: $e');
+    }
+
+    try {
+      final user = await UserRepository.getCurrentUser();
+      if (mounted) {
+        setState(() {
+          _nameCtrl.text = user.name;
+          _emailCtrl.text = user.username;
+          _companyCtrl.text = user.company ?? '';
+          _townCtrl.text = user.town ?? '';
+          _quoteCtrl.text = user.bio ?? user.quote ?? '';
+          if (user.avatar.isNotEmpty) {
+            _avatarPath = user.avatar;
+          }
+          _avatarPublic = user.avatarPublic;
         });
 
-        // Sync backend latest data back into SharedPreferences
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(_prefName, _nameCtrl.text);
-        await prefs.setString(_prefEmail, _emailCtrl.text);
-        await prefs.setString(_prefPhone, _phoneCtrl.text);
       }
     } catch (e) {
       debugPrint('Failed to load user from backend: $e');
+    }
+
+    try {
+      final profile = await UserService.getCurrentUser();
+      final phone = profile['phone']?.toString() ?? '';
+      final avatar = profile['avatar']?.toString() ??
+          profile['avatarUrl']?.toString() ??
+          profile['profileImage']?.toString() ??
+          profile['profilePicture']?.toString() ?? '';
+
+      final prefs = await SharedPreferences.getInstance();
+      if (avatar.isNotEmpty) {
+        await prefs.setString(_prefAvatarUrl, avatar);
+        await prefs.setInt(_prefAvatarSyncState, 1);
+      }
+      if (phone.isNotEmpty) {
+        await prefs.setString(_prefPhoneNumber, phone);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        if (phone.isNotEmpty) {
+          _phoneCtrl.text = phone;
+        }
+        if (avatar.isNotEmpty) {
+          _avatarPath = avatar;
+          _avatarSyncState = 1;
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to load phone/profile cache: $e');
     }
   }
 
@@ -92,50 +151,74 @@ class _EditProfileState extends State<EditProfile> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefName, _nameCtrl.text.trim());
-    await prefs.setString(_prefUsername, _usernameCtrl.text.trim());
-    await prefs.setString(_prefEmail, _emailCtrl.text.trim());
-    await prefs.setString(_prefPhone, _phoneCtrl.text.trim());
-    if (_birthday != null) {
-      await prefs.setInt(_prefBirthday, _birthday!.millisecondsSinceEpoch);
-    }
-    if (_avatarPath != null) {
-      await prefs.setString(_prefAvatarPath, _avatarPath!);
-    }
-
     // Build selective payload to avoid overwriting unchanged fields on backend
     try {
-      final String name = _nameCtrl.text.trim();
-      final String bio = _quoteCtrl.text.trim();
-      final String location = _townCtrl.text.trim();
-      
-      // Update basic fields via UserService
-      await UserService.updateProfile({
-        'name': name,
-        'bio': bio,
-        'location': location,
-      });
-
+      final prefs = await SharedPreferences.getInstance();
+      final cachedAvatarUrl = prefs.getString(_prefAvatarUrl) ?? '';
+      final syncState = prefs.getInt(_prefAvatarSyncState) ?? _avatarSyncState;
+      bool shouldSyncAvatar = false;
+      String? uploadedAvatarUrl;
       // Update avatar if picked
       if (_avatarPath != null && _avatarPath!.isNotEmpty) {
-        // Only trigger update if it's a local file picked (not a network url)
-        if (!Uri.parse(_avatarPath!).isAbsolute) {
-           await UserService.updateAvatar(_avatarPath!);
+        // Only trigger update if it's a local file picked or a blob url (not a remote http url)
+        final isLocalFile = !_avatarPath!.startsWith('http') || _avatarPath!.startsWith('blob:');
+        if (isLocalFile) {
+          await prefs.setInt(_prefAvatarSyncState, 0);
+          _avatarSyncState = 0;
+          final originalPath = _avatarPath!;
+          uploadedAvatarUrl = await CloudinaryService.uploadFile(originalPath);
+            if (uploadedAvatarUrl != null) {
+              _avatarPath = uploadedAvatarUrl; // Switch local path to the permanent URL
+              shouldSyncAvatar = true;
+          } else {
+            try {
+              // Fallback to backend multipart upload ONLY if Cloudinary fails
+              await UserService.updateAvatar(originalPath);
+            } catch (e) {
+              debugPrint('Multipart upload failed: $e');
+            }
+          }
+        } else {
+          final sameAsCache = cachedAvatarUrl.isNotEmpty && cachedAvatarUrl == _avatarPath;
+          if (syncState == 0 || !sameAsCache) {
+            uploadedAvatarUrl = _avatarPath; // Re-sync the existing URL to the database
+            shouldSyncAvatar = true;
+          }
         }
       }
 
-      final updated = await UserRepository.getCurrentUser();
-      _currentUser = updated;
+      // Update basic fields and avatar via UserRepository
+      await UserRepository.updateProfile(
+        name: _nameCtrl.text.trim(),
+        bio: _quoteCtrl.text.trim(),
+        quote: _quoteCtrl.text.trim(),
+        location: _townCtrl.text.trim(),
+        company: _companyCtrl.text.trim(),
+        avatar: shouldSyncAvatar ? uploadedAvatarUrl : null,
+        avatarPublic: _avatarPublic,
+      );
+      if (shouldSyncAvatar && (uploadedAvatarUrl ?? '').isNotEmpty) {
+        await prefs.setString(_prefAvatarUrl, uploadedAvatarUrl!);
+        await prefs.setInt(_prefAvatarSyncState, 1);
+        _avatarSyncState = 1;
+      }
+
+      final phone = _phoneCtrl.text.trim();
+      if (phone.isNotEmpty) {
+        await prefs.setString(_prefPhoneNumber, phone);
+      }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Profile updated successfully')),
       );
       // Refetch latest profile from backend to ensure UI reflects server state
-      await _loadFromBackend();
-      setState(() => _saving = false);
-      Navigator.pop(context);
+      // No need to call _loadFromBackend() again as updateProfile returns the updated user.
+      // Just pop the screen.
+      if (mounted) {
+        setState(() => _saving = false);
+        Navigator.pop(context);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
@@ -149,23 +232,12 @@ class _EditProfileState extends State<EditProfile> {
     final result =
         await _picker.pickImage(source: ImageSource.gallery, maxWidth: 1024);
     if (result != null) {
-      setState(() => _avatarPath = result.path);
-    }
-  }
-
-  Future<void> _pickBirthday() async {
-    final now = DateTime.now();
-    final initial = _birthday ?? DateTime(now.year - 18, now.month, now.day);
-    final first = DateTime(1900);
-    final last = DateTime(now.year, now.month, now.day);
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: first,
-      lastDate: last,
-    );
-    if (picked != null) {
-      setState(() => _birthday = picked);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_prefAvatarSyncState, 0);
+      setState(() {
+        _avatarSyncState = 0;
+        _avatarPath = result.path;
+      });
     }
   }
 
@@ -179,6 +251,29 @@ class _EditProfileState extends State<EditProfile> {
     _townCtrl.dispose();
     _quoteCtrl.dispose();
     super.dispose();
+  }
+
+  Widget _buildStatItem(String label, String value, Color textColor) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: GoogleFonts.inter(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: textColor,
+          ),
+        ),
+        SizedBox(height: 0.4.h),
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 12,
+            color: textColor.withValues(alpha: 0.75),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -200,17 +295,52 @@ class _EditProfileState extends State<EditProfile> {
               Center(
                 child: Stack(
                   children: [
-                    CircleAvatar(
-                      radius: 40,
-                      backgroundColor:
-                          colorScheme.outline.withValues(alpha: 0.2),
-                      backgroundImage: _avatarPath != null
-                          ? FileImage(File(_avatarPath!))
-                          : null,
-                      child: _avatarPath == null
-                          ? const Icon(Icons.person, size: 40)
-                          : null,
+                    GestureDetector(
+                      onTap: () {
+                        if (_avatarPath != null && _avatarPath!.startsWith('http') && !_avatarPath!.startsWith('blob:')) {
+                          showDialog(
+                            context: context,
+                            builder: (_) => FullScreenImageViewer(imageUrl: _avatarPath!),
+                          );
+                        } else {
+                          _pickAvatar();
+                        }
+                      },
+                      child: CircleAvatar(
+                        radius: 40,
+                        backgroundColor:
+                            colorScheme.outline.withValues(alpha: 0.2),
+                        backgroundImage: _avatarPath != null && _avatarPath!.isNotEmpty
+                            ? ((kIsWeb || _avatarPath!.startsWith('http'))
+                                ? NetworkImage(_avatarPath!)
+                                : FileImage(File(_avatarPath!))
+                                    as ImageProvider)
+                            : null,
+                        child: _avatarPath == null || _avatarPath!.isEmpty
+                            ? const Icon(Icons.person, size: 40)
+                            : null,
+                      ),
                     ),
+                    if (_avatarPath != null && _avatarPath!.startsWith('http') && !_avatarPath!.startsWith('blob:'))
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        child: InkWell(
+                          onTap: () async {
+                            final ext = _avatarPath!.split('.').last.split('?').first;
+                            final name = 'ispilo_avatar_${DateTime.now().millisecondsSinceEpoch}.${ext.isEmpty ? 'jpg' : ext}';
+                            await MediaDownloadService.downloadFile(_avatarPath!, name, context);
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: colorScheme.secondary,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            padding: const EdgeInsets.all(6),
+                            child: Icon(Icons.download, color: colorScheme.onSecondary, size: 18),
+                          ),
+                        ),
+                      ),
                     Positioned(
                       bottom: 0,
                       right: 0,
@@ -227,6 +357,25 @@ class _EditProfileState extends State<EditProfile> {
                         ),
                       ),
                     ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 3.h),
+              Container(
+                padding: EdgeInsets.symmetric(vertical: 1.8.h, horizontal: 4.w),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: colorScheme.primary.withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildStatItem('Followers', _followers.toString(), colorScheme.onSurface),
+                    _buildStatItem('Following', _following.toString(), colorScheme.onSurface),
+                    _buildStatItem('Connections', _connections.toString(), colorScheme.onSurface),
                   ],
                 ),
               ),

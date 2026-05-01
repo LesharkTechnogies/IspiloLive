@@ -1,4 +1,15 @@
 /// Conversation model for messaging
+DateTime _parseServerDateTimeToLocal(dynamic raw) {
+  final rawText = raw?.toString().trim() ?? '';
+  if (rawText.isEmpty) return DateTime.now();
+
+  final hasZone = RegExp(r'(Z|[+-]\d{2}:\d{2})$').hasMatch(rawText);
+  final normalized = hasZone ? rawText : '${rawText}Z';
+  final parsed = DateTime.tryParse(normalized);
+  if (parsed == null) return DateTime.now();
+  return parsed.toLocal();
+}
+
 class ConversationModel {
   final String id;
   final String name;
@@ -21,6 +32,9 @@ class ConversationModel {
   });
 
   factory ConversationModel.fromJson(Map<String, dynamic> json) {
+    final lastMessageTimestamp =
+        (json['lastMessageAt'] ?? json['lastMessageTime']) as String?;
+
     return ConversationModel(
       id: json['id'] as String,
       name: json['name'] as String? ?? '',
@@ -30,9 +44,7 @@ class ConversationModel {
               .toList()
           : [],
       lastMessage: json['lastMessage'] as String? ?? '',
-      lastMessageTime: json['lastMessageTime'] != null
-          ? DateTime.parse(json['lastMessageTime'] as String)
-          : DateTime.now(),
+    lastMessageTime: _parseServerDateTimeToLocal(lastMessageTimestamp),
       unreadCount: json['unreadCount'] as int? ?? 0,
       encryptionKey: json['encryptionKey'] as String?,
       isGroup: json['isGroup'] as bool? ?? false,
@@ -59,12 +71,14 @@ class ConversationParticipant {
   final String name;
   final String? avatar;
   final bool isOnline;
+  final DateTime? lastSeenAt;
 
   ConversationParticipant({
     required this.id,
     required this.name,
     this.avatar,
     required this.isOnline,
+    this.lastSeenAt,
   });
 
   factory ConversationParticipant.fromJson(Map<String, dynamic> json) {
@@ -73,6 +87,9 @@ class ConversationParticipant {
       name: json['name'] as String? ?? '',
       avatar: json['avatar'] as String?,
       isOnline: json['isOnline'] as bool? ?? false,
+      lastSeenAt: json['lastSeenAt'] != null
+          ? _parseServerDateTimeToLocal(json['lastSeenAt'])
+          : null,
     );
   }
 
@@ -82,6 +99,7 @@ class ConversationParticipant {
       'name': name,
       'avatar': avatar,
       'isOnline': isOnline,
+      'lastSeenAt': lastSeenAt?.toIso8601String(),
     };
   }
 }
@@ -101,6 +119,8 @@ class MessageModel {
   final String? mediaUrl;
   final bool isRead;
   final DateTime timestamp;
+  final String? replyToMessageId;
+  final Map<String, String> reactions;
 
   MessageModel({
     required this.id,
@@ -116,25 +136,40 @@ class MessageModel {
     this.mediaUrl,
     required this.isRead,
     required this.timestamp,
+    this.replyToMessageId,
+    this.reactions = const {},
   });
 
   factory MessageModel.fromJson(Map<String, dynamic> json) {
+    String? resolvedContent = json['content'] as String?;
+    if (resolvedContent == null || resolvedContent.isEmpty) {
+      resolvedContent = json['text'] as String?;
+    }
+    if (resolvedContent == null || resolvedContent.isEmpty) {
+      final payload = json['payload'];
+      if (payload is Map<String, dynamic>) {
+        resolvedContent = payload['text'] as String?;
+      }
+    }
+
     return MessageModel(
-      id: json['id'] as String,
+      id: json['id'] as String? ?? '',
       clientMsgId: json['clientMsgId'] as String? ?? '',
       conversationId: json['conversationId'] as String? ?? '',
       senderId: json['senderId'] as String? ?? '',
       senderName: json['senderName'] as String? ?? 'Unknown',
       senderAvatar: json['senderAvatar'] as String?,
-      content: json['content'] as String? ?? '',
+      content: resolvedContent ?? '',
       encryptedContent: json['encryptedContent'] as String?,
       encryptionIv: json['encryptionIv'] as String?,
       type: _parseMessageType(json['type'] as String? ?? 'TEXT'),
       mediaUrl: json['mediaUrl'] as String?,
       isRead: json['isRead'] as bool? ?? false,
-      timestamp: json['createdAt'] != null
-          ? DateTime.parse(json['createdAt'] as String)
-          : DateTime.now(),
+      timestamp: _parseServerDateTimeToLocal(json['createdAt']),
+      replyToMessageId: json['replyToMessageId']?.toString(),
+      reactions: (json['reactions'] as Map?)
+              ?.map((key, value) => MapEntry(key.toString(), value.toString())) ??
+          const <String, String>{},
     );
   }
 
@@ -153,6 +188,8 @@ class MessageModel {
       'mediaUrl': mediaUrl,
       'isRead': isRead,
       'createdAt': timestamp.toIso8601String(),
+      'replyToMessageId': replyToMessageId,
+      'reactions': reactions,
     };
   }
 

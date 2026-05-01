@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart'; // added kIsWeb
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 import 'app_security_service.dart';
+import 'push_notification_service.dart';
 
 class AuthService {
   static Future<Map<String, dynamic>> login(String phone, String password) async {
@@ -41,6 +43,9 @@ class AuthService {
       // Trigger app registration now that we have phone
       try {
         await AppSecurityService().registerAppAfterLogin(phone);
+        if (!kIsWeb) {
+          await PushNotificationService.initialize();
+        }
       } catch (e) {
         // Non-fatal
       }
@@ -75,5 +80,31 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
     await prefs.remove('refresh_token');
+  }
+
+  static Future<void> requestResetCode(String email) async {
+    await ApiService.post('/auth/forgot-password/request-code', {
+      'email': email,
+    });
+  }
+
+  static Future<void> resendResetCode(String email) async {
+    await ApiService.post('/auth/forgot-password/resend-code', {
+      'email': email,
+    });
+  }
+
+  static Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    await ApiService.post('/auth/forgot-password/reset', {
+      'email': email,
+      'code': code,
+      'newPassword': newPassword,
+      'confirmPassword': confirmPassword,
+    });
   }
 }

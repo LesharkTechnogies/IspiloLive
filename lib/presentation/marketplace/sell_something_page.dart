@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../core/services/cloudinary_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../model/repository/product_repository.dart';
+import '../../core/services/cloudinary_service.dart';
 import 'dart:io';
 class SellSomethingPage extends StatefulWidget {
   const SellSomethingPage({super.key});
@@ -72,12 +75,44 @@ class _SellSomethingPageState extends State<SellSomethingPage> {
     });
   }
 
-  void _saveProduct() {
+  bool _isSaving = false;
+
+  Future<void> _saveProduct() async {
     if (_formKey.currentState?.validate() ?? false) {
-      // TODO: Upload product details and images to backend
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Product posted!')),
-      );
+      setState(() => _isSaving = true);
+      try {
+        final uploadedUrls = <String>[];
+        for (var image in _images) {
+          final url = await CloudinaryService.uploadFile(image.path, resourceType: 'auto');
+          if (url != null) uploadedUrls.add(url);
+        }
+
+        await ProductRepository.createProduct(
+          title: _productNameController.text.trim(),
+          description: _descController.text.trim(),
+          price: 0.0, // Assuming price is 0 since no field exists
+          category: 'Default', // Assuming default since no field exists
+          mainImage: uploadedUrls.isNotEmpty ? uploadedUrls.first : null,
+          images: uploadedUrls,
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Product posted successfully!')),
+          );
+          Navigator.pop(context);
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to post product: $e')),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _isSaving = false);
+        }
+      }
     }
   }
 
@@ -284,13 +319,19 @@ class _SellSomethingPageState extends State<SellSomethingPage> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _saveProduct,
+                  onPressed: _isSaving ? null : _saveProduct,
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
-                  child: const Text('Save / Post'),
+                  child: _isSaving 
+                      ? const SizedBox(
+                          height: 20, 
+                          width: 20, 
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)
+                        )
+                      : const Text('Save / Post'),
                 ),
               ),
             ],

@@ -31,6 +31,8 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback? onSearchSubmitted;
   final bool showNotificationBadge;
   final int notificationCount;
+  final VoidCallback? onTitleTap;
+  final bool isTitleLoading;
 
   const CustomAppBar({
     super.key,
@@ -50,6 +52,8 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.onSearchSubmitted,
     this.showNotificationBadge = false,
     this.notificationCount = 0,
+    this.onTitleTap,
+    this.isTitleLoading = false,
   });
 
   @override
@@ -101,7 +105,7 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   Widget? _buildTitleText(ThemeData theme) {
     if (title == null) return null;
 
-    return Text(
+    Widget titleWidget = Text(
       title!,
       style: GoogleFonts.inter(
         fontSize: 18,
@@ -109,6 +113,33 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
         color: foregroundColor ?? theme.colorScheme.onSurface,
       ),
     );
+
+    if (isTitleLoading) {
+      titleWidget = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          titleWidget,
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: foregroundColor ?? theme.colorScheme.onSurface,
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (onTitleTap != null) {
+      titleWidget = GestureDetector(
+        onTap: onTitleTap,
+        child: titleWidget,
+      );
+    }
+
+    return titleWidget;
   }
 
   Widget _buildSearchField(BuildContext context, ThemeData theme) {

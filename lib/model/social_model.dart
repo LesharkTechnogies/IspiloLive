@@ -1,4 +1,17 @@
 /// Post model for social feed
+DateTime _parseServerDateTimeToLocal(dynamic raw) {
+  final rawText = raw?.toString().trim() ?? '';
+  if (rawText.isEmpty) return DateTime.now();
+
+  // If server omits timezone (common in some serializers), treat as UTC.
+  final hasZone = RegExp(r'(Z|[+-]\d{2}:\d{2})$').hasMatch(rawText);
+  final normalized = hasZone ? rawText : '${rawText}Z';
+
+  final parsed = DateTime.tryParse(normalized);
+  if (parsed == null) return DateTime.now();
+  return parsed.toLocal();
+}
+
 class PostModel {
   final String id;
   final String userId;
@@ -17,6 +30,10 @@ class PostModel {
   final bool hasVerification;
   final DateTime createdAt;
   final List<String>? ctaButtons;
+  final String? groupId;
+  final String? groupName;
+  final String? groupAvatar;
+  final bool isGroupPost;
 
   PostModel({
     required this.id,
@@ -36,9 +53,23 @@ class PostModel {
     required this.hasVerification,
     required this.createdAt,
     this.ctaButtons,
+    this.groupId,
+    this.groupName,
+    this.groupAvatar,
+    this.isGroupPost = false,
   });
 
   factory PostModel.fromJson(Map<String, dynamic> json) {
+    final group = (json['group'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final groupId = json['groupId']?.toString() ?? group['id']?.toString();
+    final groupName = json['groupName']?.toString() ?? group['name']?.toString();
+    final groupAvatar = json['groupAvatar']?.toString() ??
+        group['avatar']?.toString() ??
+        group['image']?.toString();
+    final isGroupPost = json['isGroup'] as bool? ??
+        json['groupPost'] as bool? ??
+        (groupId != null && groupId.toString().trim().isNotEmpty);
+
     return PostModel(
       id: json['id']?.toString() ?? '',
       userId: json['user']?['id']?.toString() ?? '',
@@ -51,16 +82,18 @@ class PostModel {
       likesCount: _parseInt(json['likesCount']),
       commentsCount: _parseInt(json['commentsCount']),
       viewCount: _parseInt(json['viewCount']),
-      isLiked: json['isLiked'] as bool? ?? false,
+  isLiked: json['isLiked'] as bool? ?? json['likedByCurrentUser'] as bool? ?? false,
       isSaved: json['isSaved'] as bool? ?? false,
       isSponsored: json['isSponsored'] as bool? ?? false,
       hasVerification: json['hasVerification'] as bool? ?? false,
-      createdAt: json['createdAt'] != null
-          ? DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? DateTime.now()
-          : DateTime.now(),
+    createdAt: _parseServerDateTimeToLocal(json['createdAt']),
       ctaButtons: json['ctaButtons'] != null
           ? List<String>.from(json['ctaButtons'] as List)
           : null,
+      groupId: groupId?.toString(),
+      groupName: groupName?.toString(),
+      groupAvatar: groupAvatar?.toString(),
+      isGroupPost: isGroupPost,
     );
   }
 
@@ -91,6 +124,10 @@ class PostModel {
       'hasVerification': hasVerification,
       'createdAt': createdAt.toIso8601String(),
       'ctaButtons': ctaButtons,
+      'groupId': groupId,
+      'groupName': groupName,
+      'groupAvatar': groupAvatar,
+      'isGroup': isGroupPost,
     };
   }
 
@@ -165,7 +202,9 @@ class CommentModel {
   factory CommentModel.fromJson(Map<String, dynamic> json) {
     final user = (json['user'] as Map?)?.cast<String, dynamic>() ?? const {};
     final post = (json['post'] as Map?)?.cast<String, dynamic>() ?? const {};
-    final parent = (json['parent'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final parent = (json['parentComment'] as Map?)?.cast<String, dynamic>() ??
+        (json['parent'] as Map?)?.cast<String, dynamic>() ??
+        const {};
     final rawReplies = json['replies'] as List? ?? const [];
 
     return CommentModel(
@@ -179,9 +218,7 @@ class CommentModel {
       userAvatar: user['avatar']?.toString() ?? '',
       content: json['content']?.toString() ?? json['text']?.toString() ?? '',
       likesCount: PostModel._parseInt(json['likesCount'] ?? json['likes']),
-      createdAt: json['createdAt'] != null
-          ? DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? DateTime.now()
-          : DateTime.now(),
+    createdAt: _parseServerDateTimeToLocal(json['createdAt']),
       replies: rawReplies
           .whereType<Map>()
           .map((reply) => CommentModel.fromJson(reply.cast<String, dynamic>()))
@@ -221,6 +258,7 @@ class UserModel {
   final String? quote;
   final String? coverImage;
   final DateTime? createdAt;
+  final DateTime? lastSeenAt;
 
   UserModel({
     required this.id,
@@ -237,12 +275,38 @@ class UserModel {
     this.quote,
     this.coverImage,
     this.createdAt,
+    this.lastSeenAt,
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
+  final user = (json['user'] as Map?)?.cast<String, dynamic>() ?? const {};
     final profile = (json['profile'] as Map?)?.cast<String, dynamic>() ?? const {};
+  final resolvedId =
+    json['id']?.toString() ??
+    json['userId']?.toString() ??
+    json['authorId']?.toString() ??
+    user['id']?.toString() ??
+    user['userId']?.toString() ??
+    profile['id']?.toString() ??
+    '';
+  final resolvedName =
+    json['name']?.toString() ??
+    user['name']?.toString() ??
+    json['displayName']?.toString() ??
+    user['displayName']?.toString() ??
+    json['username']?.toString() ??
+    user['username']?.toString() ??
+    'Unknown';
+  final resolvedUsername =
+    json['email']?.toString() ??
+    json['username']?.toString() ??
+    user['email']?.toString() ??
+    user['username']?.toString() ??
+    '';
     final avatarUrl = json['avatar']?.toString() ??
+    user['avatar']?.toString() ??
         json['avatarUrl']?.toString() ??
+    user['avatarUrl']?.toString() ??
         json['profileImage']?.toString() ??
         json['profilePicture']?.toString() ??
         profile['avatar']?.toString() ??
@@ -250,9 +314,9 @@ class UserModel {
         '';
 
     return UserModel(
-      id: json['id']?.toString() ?? '',
-      username: json['email']?.toString() ?? json['username']?.toString() ?? '',
-      name: json['name']?.toString() ?? json['username']?.toString() ?? 'Unknown',
+    id: resolvedId,
+    username: resolvedUsername,
+    name: resolvedName,
       avatar: avatarUrl,
       bio: json['bio'] as String?,
       isVerified: json['isVerified'] as bool? ?? false,
@@ -263,7 +327,12 @@ class UserModel {
       town: json['town'] as String?,
       quote: json['quote'] as String?,
       coverImage: json['coverImage'] as String?,
-      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt'] as String) : null,
+      createdAt: json['createdAt'] != null
+          ? _parseServerDateTimeToLocal(json['createdAt'])
+          : null,
+      lastSeenAt: json['lastSeenAt'] != null
+          ? _parseServerDateTimeToLocal(json['lastSeenAt'])
+          : null,
     );
   }
 
@@ -283,6 +352,7 @@ class UserModel {
       'quote': quote,
       'coverImage': coverImage,
       'createdAt': createdAt?.toIso8601String(),
+      'lastSeenAt': lastSeenAt?.toIso8601String(),
     };
   }
 }
@@ -316,7 +386,7 @@ class StoryModel {
       isViewed: json['isViewed'] as bool? ?? false,
       isOwn: json['isOwn'] as bool? ?? false,
       createdAt: json['createdAt'] != null
-          ? DateTime.parse(json['createdAt'] as String)
+          ? _parseServerDateTimeToLocal(json['createdAt'])
           : DateTime.now(),
     );
   }

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../../core/app_export.dart';
 import '../../core/theme_provider.dart';
@@ -16,7 +17,6 @@ import './widgets/settings_section_widget.dart';
 import './widgets/settings_switch_widget.dart';
 import './widgets/settings_tile_widget.dart';
 import 'change_password.dart';
-import '../../model/social_model.dart';
 
 class Settings extends StatefulWidget {
   const Settings({super.key});
@@ -26,6 +26,7 @@ class Settings extends StatefulWidget {
 }
 
 class _SettingsState extends State<Settings> {
+  static const String _prefProfileAvatarUrl = 'pref_profile_avatar_url';
   // Pref keys
   static const String _prefBiometric = 'pref_biometric_auth';
   static const String _prefTwoFactor = 'pref_two_factor';
@@ -36,9 +37,11 @@ class _SettingsState extends State<Settings> {
   static const String _prefMarketplaceNotifs = 'pref_marketplace_notifs';
   static const String _prefHighContrast = 'pref_high_contrast';
   static const String _prefOfflineContent = 'pref_offline_content';
+  static const String _prefOfflineMessages = 'pref_offline_messages';
 
   // Settings state variables
   bool _biometricAuth = false;
+  String? _cachedAvatarUrl;
   bool _twoFactorAuth = false;
   bool _accountVisibility = true;
   bool _socialNotifications = true;
@@ -49,20 +52,17 @@ class _SettingsState extends State<Settings> {
   bool _systemTheme = true;
   bool _highContrast = false;
   bool _offlineContent = true;
+  bool _offlineMessages = true;
 
   final LocalAuthentication _localAuth = LocalAuthentication();
 
   // User profile and stats from API
   Map<String, dynamic>? _userProfile;
   // Cached current user model (from social feed models)
-  UserModel? _currentUser;
-  static const String _prefAvatar = 'pref_avatar';
-  final int _postCount = 0;
-  final int _followers = 0;
-  final int _following = 0;
-  final int _connections = 0;
-  final bool _isLoading = false;
-  String? _errorMessage;
+  int _postCount = 0;
+  int _followers = 0;
+  int _following = 0;
+  int _connections = 0;
 
   static const Duration _createShopLabelVisibleDuration = Duration(minutes: 1);
   Timer? _createShopLabelTimer;
@@ -72,19 +72,32 @@ class _SettingsState extends State<Settings> {
   Future<void> _loadUserProfileAndStats() async {
     try {
       final user = await UserService.getCurrentUser();
-      
+      final avatar = user['avatar']?.toString() ??
+          user['avatarUrl']?.toString() ??
+          user['profileImage']?.toString() ??
+          user['profilePicture']?.toString() ??
+          '';
+
+      if (avatar.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_prefProfileAvatarUrl, avatar);
+      }
+
       setState(() {
         _userProfile = user;
+        if (avatar.isNotEmpty) {
+          _cachedAvatarUrl = avatar;
+        }
       });
 
-      // Quick test for user stats fetching (future integration)
-      // final stats = await UserService.getUserStats();
-      // setState(() {
-      //   _postCount = stats['posts'] ?? 0;
-      //   _followers = stats['followers'] ?? 0;
-      //   _following = stats['following'] ?? 0;
-      //   _connections = stats['connections'] ?? 0;
-      // });
+      // Fetch user stats
+      final stats = await UserService.getUserStats();
+      setState(() {
+        _postCount = (stats['posts'] ?? stats['postCount'] ?? 0) as int;
+        _followers = (stats['followers'] ?? stats['followersCount'] ?? 0) as int;
+        _following = (stats['following'] ?? stats['followingCount'] ?? 0) as int;
+        _connections = (stats['connections'] ?? stats['connectionsCount'] ?? 0) as int;
+      });
     } catch (e) {
       debugPrint('Failed to load user profile: $e');
     }
@@ -96,7 +109,12 @@ class _SettingsState extends State<Settings> {
           'name': _userProfile!['name'] ?? _userProfile!['firstName'] ?? 'User',
           'username': _userProfile!['username'] ?? '',
           'email': _userProfile!['email'] ?? '',
-          'avatar': _userProfile!['avatar'] ?? '',
+          'avatar': _userProfile!['avatar'] ??
+              _userProfile!['avatarUrl'] ??
+              _userProfile!['profileImage'] ??
+              _userProfile!['profilePicture'] ??
+              _cachedAvatarUrl ??
+              '',
           'bio': _userProfile!['bio'] ?? '',
           'verified': _userProfile!['isVerified'] ?? false,
           'location': _userProfile!['location'] ?? _userProfile!['town'] ?? '',
@@ -113,8 +131,23 @@ class _SettingsState extends State<Settings> {
   void initState() {
     super.initState();
     _loadSettings();
+    _loadCachedAvatar();
     _loadUserProfileAndStats();
     _startCreateShopLabelTimer();
+  }
+
+  Future<void> _loadCachedAvatar() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString(_prefProfileAvatarUrl);
+      if (cached == null || cached.isEmpty) return;
+      if (!mounted) return;
+      setState(() {
+        _cachedAvatarUrl = cached;
+      });
+    } catch (_) {
+      // Best effort only.
+    }
   }
 
   @override
@@ -256,6 +289,7 @@ class _SettingsState extends State<Settings> {
       _marketplaceNotifications = prefs.getBool(_prefMarketplaceNotifs) ?? true;
       _highContrast = prefs.getBool(_prefHighContrast) ?? false;
       _offlineContent = prefs.getBool(_prefOfflineContent) ?? true;
+      _offlineMessages = prefs.getBool(_prefOfflineMessages) ?? true;
     });
   }
 
@@ -270,6 +304,7 @@ class _SettingsState extends State<Settings> {
     await prefs.setBool(_prefMarketplaceNotifs, _marketplaceNotifications);
     await prefs.setBool(_prefHighContrast, _highContrast);
     await prefs.setBool(_prefOfflineContent, _offlineContent);
+    await prefs.setBool(_prefOfflineMessages, _offlineMessages);
   }
 
   Future<void> _handleBiometricToggle(bool value) async {
@@ -379,8 +414,11 @@ class _SettingsState extends State<Settings> {
     });
   }
 
-  void _handleEditProfile() {
-    Navigator.pushNamed(context, '/edit-profile');
+  void _handleEditProfile() async {
+    await Navigator.pushNamed(context, '/edit-profile');
+    if (mounted) {
+      _loadUserProfileAndStats();
+    }
   }
 
   void _handlePasswordChange() {
@@ -707,8 +745,11 @@ class _SettingsState extends State<Settings> {
                                 );
                               },
                               child: Container(
+                              width: 80,
+                              height: 80,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
+                                color: colorScheme.primary.withAlpha(20),
                                   border: Border.all(
                                     color: colorScheme.surface,
                                     width: 3,
@@ -723,16 +764,27 @@ class _SettingsState extends State<Settings> {
                                 ),
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(40),
-                                  child: Hero(
-                                    tag: 'avatar_${p['avatar']}',
-                                    child: CustomImageWidget(
-                                      imageUrl: p['avatar'] as String? ?? '',
-                                      width: 80,
-                                      height: 80,
-                                      fit: BoxFit.cover,
-                                    ),
-                                  ),
-                                ),
+                                child: (p['avatar'] as String?)?.isNotEmpty == true
+                                    ? Hero(
+                                        tag: 'avatar_${p['avatar']}',
+                                        child: CustomImageWidget(
+                                          imageUrl: p['avatar'] as String,
+                                          width: 80,
+                                          height: 80,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      )
+                                    : Center(
+                                        child: Text(
+                                          (p['name'] as String?)?.isNotEmpty == true ? (p['name'] as String)[0].toUpperCase() : 'U',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 32,
+                                            fontWeight: FontWeight.w700,
+                                            color: colorScheme.primary,
+                                          ),
+                                        ),
+                                      ),
+                              ),
                               ),
                             ),
                             if (p['verified'] == true)
@@ -1069,6 +1121,18 @@ class _SettingsState extends State<Settings> {
                       _saveSettings();
                     },
                   ),
+                  SettingsSwitchWidget(
+                    title: 'Offline Messages',
+                    subtitle: 'Keep recent chats available offline',
+                    iconName: 'chat_bubble_outline',
+                    value: _offlineMessages,
+                    onChanged: (value) {
+                      setState(() {
+                        _offlineMessages = value;
+                      });
+                      _saveSettings();
+                    },
+                  ),
                   SettingsTileWidget(
                     title: 'Data Usage',
                     subtitle: 'View and manage data consumption',
@@ -1080,6 +1144,20 @@ class _SettingsState extends State<Settings> {
                     subtitle: 'Free up storage space',
                     iconName: 'delete_outline',
                     onTap: _handleClearCache,
+                    showDivider: false,
+                  ),
+                ],
+              ),
+              SettingsSectionWidget(
+                title: 'Groups',
+                children: [
+                  SettingsTileWidget(
+                    title: 'Create Group',
+                    subtitle: 'Create a new community group',
+                    iconName: 'group_add',
+                    onTap: () {
+                      Navigator.pushNamed(context, '/create-group');
+                    },
                     showDivider: false,
                   ),
                 ],

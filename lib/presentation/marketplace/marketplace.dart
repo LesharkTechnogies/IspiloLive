@@ -4,7 +4,6 @@ import 'package:sizer/sizer.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../core/app_export.dart';
-import '../../core/services/conversation_service.dart';
 import '../../model/product_model.dart';
 import '../../model/repository/product_repository.dart';
 import '../../widgets/custom_icon_widget.dart';
@@ -273,17 +272,21 @@ class _MarketplaceState extends State<Marketplace> {
       return;
     }
 
-    final conversation = await ConversationService.instance.getOrCreateConversation(
-      sellerId: seller.id,
-      sellerName: seller.businessName,
-      sellerAvatar: seller.businessLogo ?? '',
-    );
-
     if (!mounted) return;
     Navigator.pushNamed(
       context,
       AppRoutes.chat,
-      arguments: conversation,
+      arguments: {
+        'id': 'conv_${seller.id}',
+        'userId': seller.id,
+        'name': seller.businessName,
+        'avatar': seller.businessLogo ?? '',
+        'isOnline': false,
+        'isVerified': false,
+        'isGroup': false,
+        'unreadCount': 0,
+        'encryptionKey': null,
+      },
     );
   }
 
@@ -332,7 +335,7 @@ class _MarketplaceState extends State<Marketplace> {
             // Main Content
             Expanded(
               child: _isInitialLoad
-                  ? const Center(child: CircularProgressIndicator())
+                  ? _buildInitialLoadingSkeleton(colorScheme)
                   : RefreshIndicator(
                       onRefresh: _onRefresh,
                       child: CustomScrollView(
@@ -388,17 +391,6 @@ class _MarketplaceState extends State<Marketplace> {
                               ),
                             ),
 
-                          // Loading indicator
-                          if (_isLoading)
-                            SliverToBoxAdapter(
-                              child: Container(
-                                padding: EdgeInsets.all(4.w),
-                                child: const Center(
-                                  child: CircularProgressIndicator(),
-                                ),
-                              ),
-                            ),
-
                           // End of results
                           if (!_hasMoreProducts && _filteredProducts.isNotEmpty)
                             SliverToBoxAdapter(
@@ -448,6 +440,34 @@ class _MarketplaceState extends State<Marketplace> {
         currentIndex: 2,
         variant: CustomBottomBarVariant.standard,
       ),
+    );
+  }
+
+  Widget _buildInitialLoadingSkeleton(ColorScheme colorScheme) {
+    return CustomScrollView(
+      physics: const NeverScrollableScrollPhysics(),
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.only(
+            left: 2.w,
+            right: 2.w,
+            bottom: 2.h,
+            top: 0.6.h,
+          ),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              childAspectRatio: 0.667,
+              crossAxisSpacing: 2.w,
+              mainAxisSpacing: 1.h,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, index) => _buildLoadingCard(colorScheme),
+              childCount: 12,
+            ),
+          ),
+        ),
+      ],
     );
   }
 

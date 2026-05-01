@@ -9,36 +9,61 @@ class ConversationService {
   ConversationService._internal();
 
   static final ConversationService instance = ConversationService._internal();
+  static final Map<String, Future<Map<String, dynamic>>> _inFlightDirectConversations =
+      <String, Future<Map<String, dynamic>>>{};
 
   Future<Map<String, dynamic>> getOrCreateConversation({
-    required String sellerId,
-    required String sellerName,
-    required String sellerAvatar,
+    required String targetUserId,
+    required String targetName,
+    required String targetAvatar,
   }) async {
-    // Backend contract for "find existing private conversation" is not exposed
-    // here, so we create a private conversation with seller participant and
-    // rely on backend deduplication policy if available.
-  final created = await message_api.MessageService.createConversation(
-      name: sellerName,
-      participantIds: [sellerId],
+    final key = targetUserId.trim();
+    if (key.isEmpty) {
+      throw Exception('Unable to create conversation with this user right now');
+    }
+
+    final existing = _inFlightDirectConversations[key];
+    if (existing != null) {
+      return existing;
+    }
+
+    final operation = _getOrCreateConversationInternal(
+      targetUserId: targetUserId,
+      targetName: targetName,
+      targetAvatar: targetAvatar,
+    );
+
+    _inFlightDirectConversations[key] = operation;
+    try {
+      return await operation;
+    } finally {
+      _inFlightDirectConversations.remove(key);
+    }
+  }
+
+  Future<Map<String, dynamic>> _getOrCreateConversationInternal({
+    required String targetUserId,
+    required String targetName,
+    required String targetAvatar,
+  }) async {
+    final found = await message_api.MessageService.findDirectConversation(
+      targetUserId: targetUserId,
+    );
+    if (found != null) {
+      return _conversationToUiMap(found, fallbackAvatar: targetAvatar);
+    }
+
+    final created = await message_api.MessageService.createConversation(
+      name: targetName,
+      participantIds: [targetUserId],
       isGroup: false,
     );
 
     if (created != null) {
-      return _conversationToUiMap(created, fallbackAvatar: sellerAvatar);
+      return _conversationToUiMap(created, fallbackAvatar: targetAvatar);
     }
 
-    // Safe fallback map shape expected by ChatPage/app routes.
-    return {
-      'id': 'conv_$sellerId',
-      'name': sellerName,
-      'avatar': sellerAvatar,
-      'sellerId': sellerId,
-      'isOnline': false,
-      'isVerified': false,
-      'unreadCount': 0,
-      'encryptionKey': null,
-    };
+    throw Exception('Unable to create conversation with this user right now');
   }
 
   /// Fetch messages for a conversation (most recent first)
@@ -63,13 +88,16 @@ class ConversationService {
     String? mediaType,
     String? documentName,
     int? durationMs,
+    String? replyToMessageId,
   }) async {
     final messageType = _toMessageType(mediaType);
 
   final sent = await message_api.MessageService.sendMessage(
       conversationId: conversationId,
       content: text ?? '',
+      senderId: senderId,
       messageType: messageType,
+      replyToMessageId: replyToMessageId,
     );
 
     if (sent == null) {
@@ -125,6 +153,8 @@ class ConversationService {
       'durationMs': null,
       'timestamp': message.timestamp.toUtc().toIso8601String(),
       'isRead': message.isRead,
+      'replyToMessageId': message.replyToMessageId,
+      'reactions': message.reactions,
     };
   }
 
@@ -137,7 +167,7 @@ class ConversationService {
 
     return {
       'id': conversation.id,
-      'userId': conversation.id,
+      'userId': firstParticipant?.id,
       'name': conversation.name.isNotEmpty
           ? conversation.name
           : (firstParticipant?.name ?? 'Conversation'),
@@ -145,6 +175,7 @@ class ConversationService {
       'lastMessage': conversation.lastMessage,
       'timestamp': conversation.lastMessageTime.toLocal().toString(),
       'isOnline': firstParticipant?.isOnline ?? false,
+  'lastSeenAt': firstParticipant?.lastSeenAt?.toUtc().toIso8601String(),
       'unreadCount': conversation.unreadCount,
       'isVerified': false,
       'isGroup': conversation.isGroup,

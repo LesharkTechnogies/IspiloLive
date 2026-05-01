@@ -4,7 +4,6 @@ import 'package:sizer/sizer.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../core/app_export.dart';
-import '../../../core/services/conversation_service.dart';
 import '../../../widgets/profile_avatar.dart';
 import '../../../widgets/fullscreen_image_viewer.dart';
 
@@ -593,7 +592,7 @@ class _PostCardWidgetState extends State<PostCardWidget> {
                           CustomIconWidget(
                             iconName: isLiked ? 'favorite' : 'favorite_border',
                             color: isLiked
-                                ? Colors.red
+                                ? Colors.lightGreen
                                 : theme.colorScheme.onSurface
                                     .withValues(alpha: 0.6),
                             size: 24,
@@ -655,13 +654,13 @@ class _PostCardWidgetState extends State<PostCardWidget> {
 
                         final username =
                             widget.post['username'] as String? ?? '';
-                        final sellerId =
+            final targetUserId =
                             (widget.post['userId'] ?? widget.post['authorId'])
                                 ?.toString();
 
                         if (username.isEmpty ||
-                            sellerId == null ||
-                            sellerId.isEmpty) {
+              targetUserId == null ||
+              targetUserId.isEmpty) {
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
@@ -674,35 +673,27 @@ class _PostCardWidgetState extends State<PostCardWidget> {
                           return;
                         }
 
-                        final sellerName =
+            final targetName =
                             (widget.post['name'] as String?) ?? username;
-                        final sellerAvatar =
+            final targetAvatar =
                             (widget.post['userAvatar'] as String?) ?? '';
 
-                        try {
-                          final conversation =
-                              await ConversationService.instance
-                                  .getOrCreateConversation(
-                            sellerId: sellerId,
-                            sellerName: sellerName,
-                            sellerAvatar: sellerAvatar,
-                          );
-
-                          if (!mounted) return;
-                          Navigator.pushNamed(
-                            context,
-                            AppRoutes.chat,
-                            arguments: conversation,
-                          );
-                        } catch (_) {
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Failed to open chat'),
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        }
+                        if (!mounted) return;
+                        Navigator.pushNamed(
+                          context,
+                          AppRoutes.chat,
+                          arguments: {
+                            'id': 'conv_$targetUserId',
+                            'userId': targetUserId,
+                            'name': targetName,
+                            'avatar': targetAvatar,
+                            'isOnline': false,
+                            'isVerified': false,
+                            'isGroup': false,
+                            'unreadCount': 0,
+                            'encryptionKey': null,
+                          },
+                        );
                       },
                       child: CustomIconWidget(
                         iconName: '💬',

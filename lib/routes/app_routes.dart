@@ -9,9 +9,6 @@ import '../presentation/settings/edit_profile.dart';
 import '../presentation/messages/messages.dart';
 import '../presentation/chat/chat_page.dart';
 import '../presentation/marketplace/shop_registration_step1_page.dart';
-import '../presentation/marketplace/shop_registration_step2_verification.dart';
-import '../presentation/marketplace/shop_registration_step3_payment.dart';
-import '../presentation/marketplace/shop_registration_step4_legal.dart';
 import '../presentation/auth/login_screen.dart';
 import '../presentation/auth/register_screen.dart';
 import '../presentation/auth/forgot_password_screen.dart';
@@ -21,6 +18,9 @@ import '../presentation/home_feed/discover_page.dart';
 import '../presentation/notifications/notifications_page.dart';
 import '../presentation/marketplace/seller_profile_page.dart';
 import '../presentation/profile/user_profile_page.dart';
+import '../presentation/settings/create_group_page.dart';
+import '../presentation/profile/group_profile_page.dart' hide Text;
+import '../presentation/marketplace/create_product_page.dart';
 
 class AppRoutes {
   static const String initial = '/';
@@ -37,15 +37,15 @@ class AppRoutes {
   static const String messages = '/messages';
   static const String chat = '/chat';
   static const String shopRegistrationStep1 = '/shop-registration-step1';
-  static const String shopRegistrationStep2 = '/shop-registration-step2';
-  static const String shopRegistrationStep3 = '/shop-registration-step3';
-  static const String shopRegistrationStep4 = '/shop-registration-step4';
   static const String postComments = '/post-comments';
   static const String postContent = '/post-content';
   static const String discover = '/discover';
   static const String notifications = '/notifications';
   static const String sellerProfile = '/seller-profile';
   static const String profile = '/profile';
+  static const String createGroup = '/create-group';
+  static const String groupProfile = '/group-profile';
+  static const String sellSomething = '/sell-something';
 
   static Map<String, WidgetBuilder> routes = {
     initial: (context) => const SplashScreen(),
@@ -68,7 +68,7 @@ class AppRoutes {
     postComments: (context) {
       final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
       if (args == null) {
-        return const Scaffold(body: Center(child: Text('No post data')));
+        return  const Scaffold(body: Center(child: Text('No post data')));
       }
       return PostCommentsPage(postJson: args);
     },
@@ -82,9 +82,6 @@ class AppRoutes {
     },
     discover: (context) => const DiscoverPage(),
     shopRegistrationStep1: (context) => const ShopRegistrationStep1Page(),
-    shopRegistrationStep2: (context) => const ShopRegistrationStep2VerificationPage(),
-    shopRegistrationStep3: (context) => const ShopRegistrationStep3PaymentPage(),
-    shopRegistrationStep4: (context) => const ShopRegistrationStep4LegalPage(),
     notifications: (context) => const NotificationsPage(),
     sellerProfile: (context) {
       final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
@@ -97,5 +94,13 @@ class AppRoutes {
       final userId = args?['userId']?.toString() ?? '';
       return UserProfilePage(userId: userId);
     },
+    createGroup: (context) => const CreateGroupPage(),
+    groupProfile: (context) {
+      final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+      final groupId = args?['groupId']?.toString() ?? '';
+      final groupName = args?['groupName']?.toString() ?? 'Group';
+      return GroupProfilePage(groupId: groupId, groupName: groupName);
+    },
+    sellSomething: (context) => const CreateProductPage(),
   };
 }

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/services/seller_service.dart';
-import '../../core/services/conversation_service.dart';
 import '../../model/repository/product_repository.dart';
 import '../../model/product_model.dart';
 
@@ -341,19 +340,25 @@ class _ProductDetailState extends State<ProductDetail> {
 
     _setLoading(false);
 
-    final conversation =
-        await ConversationService.instance.getOrCreateConversation(
-      sellerId: seller.id,
-      sellerName: seller.name,
-      sellerAvatar: seller.avatar,
-    );
-
     if (!mounted) return;
-    
+
     // Capture Navigator after mounted check to avoid use_build_context_synchronously
     final navigator = Navigator.of(context);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      navigator.pushNamed(AppRoutes.chat, arguments: conversation);
+      navigator.pushNamed(
+        AppRoutes.chat,
+        arguments: {
+          'id': 'conv_${seller!.id}',
+          'userId': seller.id,
+          'name': seller.name,
+          'avatar': seller.avatar,
+          'isOnline': false,
+          'isVerified': false,
+          'isGroup': false,
+          'unreadCount': 0,
+          'encryptionKey': null,
+        },
+      );
     });
   }
 
