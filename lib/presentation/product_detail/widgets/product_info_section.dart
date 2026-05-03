@@ -10,6 +10,8 @@ class ProductInfoSection extends StatelessWidget {
   final String condition;
   final double rating;
   final int reviewCount;
+  final String? category;
+  final int? stockQuantity;
 
   const ProductInfoSection({
     super.key,
@@ -18,6 +20,8 @@ class ProductInfoSection extends StatelessWidget {
     required this.condition,
     required this.rating,
     required this.reviewCount,
+    this.category,
+    this.stockQuantity,
   });
 
   @override
@@ -79,6 +83,46 @@ class ProductInfoSection extends StatelessWidget {
           ),
 
           const SizedBox(height: 16),
+          
+          if (category != null || stockQuantity != null)
+            Row(
+              children: [
+                if (category != null && category!.isNotEmpty) ...[
+                  CustomIconWidget(
+                    iconName: 'category',
+                    color: colorScheme.onSurface.withValues(alpha: 0.6),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    category!,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      color: colorScheme.onSurface.withValues(alpha: 0.8),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                ],
+                if (stockQuantity != null) ...[
+                  CustomIconWidget(
+                    iconName: 'inventory_2',
+                    color: colorScheme.onSurface.withValues(alpha: 0.6),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Stock: $stockQuantity',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      color: colorScheme.onSurface.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+
+          if (category != null || stockQuantity != null)
+            const SizedBox(height: 16),
 
           // Rating and Reviews
           Row(

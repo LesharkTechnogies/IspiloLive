@@ -30,4 +30,8 @@ class MarketplaceService {
     final response = await ApiService.get('/products/search?query=$query');
     return response['content'] ?? [];
   }
+
+  static Future<dynamic> createProduct(Map<String, dynamic> productData) async {
+    return await ApiService.post('/products', productData);
+  }
 }

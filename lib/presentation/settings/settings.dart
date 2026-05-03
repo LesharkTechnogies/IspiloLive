@@ -10,6 +10,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../core/app_export.dart';
 import '../../core/theme_provider.dart';
 import '../../core/services/user_service.dart';
+import '../../core/services/seller_service.dart';
 import '../../widgets/fullscreen_image_viewer.dart';
 import '../../widgets/custom_bottom_bar.dart';
 // Use social_repository which provides PostRepository and a UserModel-backed UserRepository
@@ -63,11 +64,6 @@ class _SettingsState extends State<Settings> {
   int _followers = 0;
   int _following = 0;
   int _connections = 0;
-
-  static const Duration _createShopLabelVisibleDuration = Duration(minutes: 1);
-  Timer? _createShopLabelTimer;
-  bool _showCreateShopLabel = true;
-  Offset? _createShopButtonOffset;
 
   Future<void> _loadUserProfileAndStats() async {
     try {
@@ -133,7 +129,6 @@ class _SettingsState extends State<Settings> {
     _loadSettings();
     _loadCachedAvatar();
     _loadUserProfileAndStats();
-    _startCreateShopLabelTimer();
   }
 
   Future<void> _loadCachedAvatar() async {
@@ -152,129 +147,7 @@ class _SettingsState extends State<Settings> {
 
   @override
   void dispose() {
-    _createShopLabelTimer?.cancel();
     super.dispose();
-  }
-
-  void _startCreateShopLabelTimer() {
-    _createShopLabelTimer?.cancel();
-    _createShopLabelTimer =
-        Timer(_createShopLabelVisibleDuration, () {
-      if (!mounted) return;
-      setState(() {
-        _showCreateShopLabel = false;
-      });
-    });
-  }
-
-  void _ensureCreateShopButtonOffset() {
-    if (_createShopButtonOffset != null) return;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _createShopButtonOffset != null) return;
-      final size = MediaQuery.of(context).size;
-      const margin = 16.0;
-      final initialOffset = Offset(
-        size.width - _createShopButtonWidth - margin,
-        size.height - _createShopButtonHeight - _createShopBottomInset,
-      );
-
-      setState(() {
-        _createShopButtonOffset = initialOffset;
-      });
-    });
-  }
-
-  double get _createShopButtonWidth => _showCreateShopLabel ? 168.0 : 56.0;
-  double get _createShopButtonHeight => 56.0;
-  double get _createShopBottomInset => 110.0;
-
-  void _updateCreateShopButtonPosition(Offset delta) {
-    final size = MediaQuery.of(context).size;
-    const margin = 16.0;
-
-    final current = _createShopButtonOffset ??
-        Offset(
-          size.width - _createShopButtonWidth - margin,
-          size.height - _createShopButtonHeight - _createShopBottomInset,
-        );
-
-    final maxX = (size.width - _createShopButtonWidth - margin).clamp(margin, size.width);
-    final maxY =
-        (size.height - _createShopButtonHeight - _createShopBottomInset).clamp(margin, size.height);
-
-    setState(() {
-      _createShopButtonOffset = Offset(
-        (current.dx + delta.dx).clamp(margin, maxX.toDouble()),
-        (current.dy + delta.dy).clamp(margin, maxY.toDouble()),
-      );
-    });
-  }
-
-  Future<void> _handleCreateShopPressed() async {
-    final prefs = await SharedPreferences.getInstance();
-    final isShopRegistered = prefs.getInt('shopregidtered') ?? 0;
-    if (!mounted) return;
-
-    if (isShopRegistered == 1) {
-      Navigator.pushNamed(context, '/sell-something');
-    } else {
-      Navigator.pushNamed(context, '/shop-registration-step1');
-    }
-  }
-
-  Widget _buildCreateShopDraggableButton(ThemeData theme) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onPanUpdate: (details) => _updateCreateShopButtonPosition(details.delta),
-      child: Material(
-        color: Colors.transparent,
-        elevation: 8,
-        borderRadius: BorderRadius.circular(28),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(28),
-          onTap: _handleCreateShopPressed,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOut,
-            height: _createShopButtonHeight,
-            padding: EdgeInsets.symmetric(
-              horizontal: _showCreateShopLabel ? 16 : 0,
-            ),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary,
-              borderRadius: BorderRadius.circular(28),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.2),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.store,
-                  color: theme.colorScheme.onPrimary,
-                ),
-                if (_showCreateShopLabel) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    'Create Shop',
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: theme.colorScheme.onPrimary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   Future<void> _loadSettings() async {
@@ -974,29 +847,20 @@ class _SettingsState extends State<Settings> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return FutureBuilder<int>(
-      future: SharedPreferences.getInstance().then((prefs) => prefs.getInt('shopregidtered') ?? 0),
-      builder: (context, snapshot) {
-        final isShopRegistered = snapshot.data == 1;
-        if (!isShopRegistered) {
-          _ensureCreateShopButtonOffset();
-        }
-        return Scaffold(
-          backgroundColor: theme.colorScheme.surface,
-          body: Consumer<ThemeProvider>(
-            builder: (context, themeProvider, child) {
-              _darkMode = themeProvider.themeMode == ThemeMode.dark;
-              _systemTheme = themeProvider.themeMode == ThemeMode.system;
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      body: Consumer<ThemeProvider>(
+        builder: (context, themeProvider, child) {
+          _darkMode = themeProvider.themeMode == ThemeMode.dark;
+          _systemTheme = themeProvider.themeMode == ThemeMode.system;
 
-              return Stack(
-                children: [
-                  ListView(
-                    padding: EdgeInsets.zero, // Forces the profile header all the way to the screen's absolute top edge
-                    children: [
-                      _buildProfileHeader(),
+          return ListView(
+            padding: EdgeInsets.zero, // Forces the profile header all the way to the screen's absolute top edge
+            children: [
+              _buildProfileHeader(),
 
-                      SizedBox(height: 1.h),
-                      SettingsSectionWidget(
+              SizedBox(height: 1.h),
+              SettingsSectionWidget(
                 title: 'Privacy & Security',
                 children: [
                   SettingsSwitchWidget(
@@ -1158,6 +1022,38 @@ class _SettingsState extends State<Settings> {
                     onTap: () {
                       Navigator.pushNamed(context, '/create-group');
                     },
+                  ),
+                  SettingsTileWidget(
+                    title: 'Create Shop',
+                    subtitle: 'Register your business as a seller',
+                    iconName: 'storefront',
+                    onTap: () async {
+                      final prefs = await SharedPreferences.getInstance();
+                      int isShopRegistered = prefs.getInt('shopregidtered') ?? 0;
+
+                      if (isShopRegistered != 1) {
+                        try {
+                          final currentUser = await UserService.getCurrentUser();
+                          final userId = currentUser['id']?.toString() ?? currentUser['userId']?.toString();
+                          if (userId != null) {
+                            // Using getSellerById from SellerService to verify if user has a seller profile
+                            final sellerRaw = await SellerService.getSellerById(userId);
+                            if (sellerRaw != null) {
+                              isShopRegistered = 1;
+                              await prefs.setInt('shopregidtered', 1);
+                            }
+                          }
+                        } catch (_) {}
+                      }
+
+                      if (!mounted) return;
+
+                      if (isShopRegistered == 1) {
+                        Navigator.pushNamed(context, '/sell-something');
+                      } else {
+                        Navigator.pushNamed(context, '/shop-registration-step1');
+                      }
+                    },
                     showDivider: false,
                   ),
                 ],
@@ -1237,25 +1133,15 @@ class _SettingsState extends State<Settings> {
                   ),
                 ],
               ),
-                      SizedBox(height: 4.h),
-                    ],
-                  ),
-                  if (!isShopRegistered && _createShopButtonOffset != null)
-                    Positioned(
-                      left: _createShopButtonOffset!.dx,
-                      top: _createShopButtonOffset!.dy,
-                      child: _buildCreateShopDraggableButton(theme),
-                    ),
-                ],
-              );
-            },
-          ),
-          bottomNavigationBar: const CustomBottomBar(
-            currentIndex: 3,
-            variant: CustomBottomBarVariant.standard,
-          ),
-        );
-      },
+              SizedBox(height: 4.h),
+            ],
+          );
+        },
+      ),
+      bottomNavigationBar: const CustomBottomBar(
+        currentIndex: 3,
+        variant: CustomBottomBarVariant.standard,
+      ),
     );
   }
 }

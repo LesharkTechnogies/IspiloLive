@@ -6,6 +6,7 @@ import 'package:ispilo/model/repository/product_repository.dart';
 import '../../core/services/seller_service.dart';
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
+import '../../widgets/common_product_card.dart';
 
 class SellerProfilePage extends StatefulWidget {
   final String sellerId;
@@ -417,7 +418,9 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
   }
 
   Widget _buildProductCard(ProductModel product, ColorScheme colorScheme) {
-    return GestureDetector(
+    return CommonProductCard(
+      product: product.toJson(),
+      showLocation: true,
       onTap: () {
         Navigator.pushNamed(
           context,
@@ -425,67 +428,6 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
           arguments: {'productId': product.id},
         );
       },
-      child: Container(
-        decoration: BoxDecoration(
-          color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: colorScheme.outline.withValues(alpha: 0.2),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Product Image
-            ClipRRect(
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(10),
-                topRight: Radius.circular(10),
-              ),
-              child: Image.network(
-                product.imageUrl.isNotEmpty
-                    ? product.imageUrl
-                    : 'https://via.placeholder.com/200x200?text=No+Image',
-                height: 15.h,
-                width: double.infinity,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    height: 15.h,
-                    color: colorScheme.outline.withValues(alpha: 0.1),
-                    child: Icon(Icons.image_not_supported, color: colorScheme.outline),
-                  );
-                },
-              ),
-            ),
-            // Product Info
-            Padding(
-              padding: EdgeInsets.all(2.w),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    product.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  SizedBox(height: 0.5.h),
-                  Text(
-                    product.priceFormatted,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: colorScheme.primary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -517,3 +459,4 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
     );
   }
 }
+

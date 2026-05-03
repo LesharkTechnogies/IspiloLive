@@ -7,14 +7,14 @@ import '../../../widgets/custom_icon_widget.dart';
 
 class ActionButtonsBar extends StatelessWidget {
   final VoidCallback onContactSeller;
-  final VoidCallback onMakeOffer;
+  final VoidCallback onBuyNow;
   final VoidCallback onSaveProduct;
   final bool isSaved;
 
   const ActionButtonsBar({
     super.key,
     required this.onContactSeller,
-    required this.onMakeOffer,
+    required this.onBuyNow,
     required this.onSaveProduct,
     required this.isSaved,
   });
@@ -100,7 +100,7 @@ class ActionButtonsBar extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'Contact Seller',
+                      'Contact',
                       style: GoogleFonts.inter(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
@@ -113,12 +113,12 @@ class ActionButtonsBar extends StatelessWidget {
 
             const SizedBox(width: 12),
 
-            // Make Offer Button
+            // Buy Now Button
             Expanded(
               child: ElevatedButton(
                 onPressed: () {
                   HapticFeedback.lightImpact();
-                  onMakeOffer();
+                  onBuyNow();
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: colorScheme.primary,
@@ -133,13 +133,13 @@ class ActionButtonsBar extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     CustomIconWidget(
-                      iconName: 'local_offer',
+                      iconName: 'shopping_cart',
                       color: colorScheme.onPrimary,
                       size: 20,
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'Make Offer',
+                      'Buy Now',
                       style: GoogleFonts.inter(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,

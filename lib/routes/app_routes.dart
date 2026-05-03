@@ -8,7 +8,6 @@ import '../presentation/settings/settings.dart';
 import '../presentation/settings/edit_profile.dart';
 import '../presentation/messages/messages.dart';
 import '../presentation/chat/chat_page.dart';
-import '../presentation/marketplace/shop_registration_step1_page.dart';
 import '../presentation/auth/login_screen.dart';
 import '../presentation/auth/register_screen.dart';
 import '../presentation/auth/forgot_password_screen.dart';
@@ -20,7 +19,9 @@ import '../presentation/marketplace/seller_profile_page.dart';
 import '../presentation/profile/user_profile_page.dart';
 import '../presentation/settings/create_group_page.dart';
 import '../presentation/profile/group_profile_page.dart' hide Text;
+import '../presentation/marketplace/checkout_page.dart';
 import '../presentation/marketplace/create_product_page.dart';
+import '../presentation/marketplace/seller_registration_page.dart';
 
 class AppRoutes {
   static const String initial = '/';
@@ -46,6 +47,7 @@ class AppRoutes {
   static const String createGroup = '/create-group';
   static const String groupProfile = '/group-profile';
   static const String sellSomething = '/sell-something';
+  static const String checkout = '/checkout';
 
   static Map<String, WidgetBuilder> routes = {
     initial: (context) => const SplashScreen(),
@@ -102,5 +104,10 @@ class AppRoutes {
       return GroupProfilePage(groupId: groupId, groupName: groupName);
     },
     sellSomething: (context) => const CreateProductPage(),
+    checkout: (context) {
+      final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+      final product = args?['product'] as Map<String, dynamic>? ?? {};
+      return CheckoutPage(product: product);
+    },
   };
 }

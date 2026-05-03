@@ -150,6 +150,9 @@ class SellerService {
       return Seller.fromJson(response as Map<String, dynamic>);
     } catch (e) {
       debugPrint('Error creating seller profile: $e');
+      if (e.toString().toLowerCase().contains('already a seller') || e.toString().toLowerCase().contains('conflict')) {
+        throw Exception('already_seller');
+      }
       return null;
     }
   }

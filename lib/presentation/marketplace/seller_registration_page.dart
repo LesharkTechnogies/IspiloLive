@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:iconsax/iconsax.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/services/seller_service.dart';
 
 class ShopRegistrationStep1Page extends StatefulWidget {
@@ -21,24 +22,47 @@ class _ShopRegistrationStep1PageState extends State<ShopRegistrationStep1Page> {
     if (_formKey.currentState?.validate() ?? false) {
       setState(() => _isLoading = true);
       
-      final seller = await SellerService.createSellerProfile(
-        businessName: _businessNameController.text.trim(),
-        businessDescription: _businessDescriptionController.text.trim(),
-        businessAddress: _businessAddressController.text.trim(),
-      );
-      
-      setState(() => _isLoading = false);
-      
-      if (seller != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Seller profile created successfully!')),
+      try {
+        final seller = await SellerService.createSellerProfile(
+          businessName: _businessNameController.text.trim(),
+          businessDescription: _businessDescriptionController.text.trim(),
+          businessAddress: _businessAddressController.text.trim(),
         );
-        // Go to marketplace or seller profile
-        Navigator.pop(context);
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to create seller profile.')),
-        );
+        
+        setState(() => _isLoading = false);
+        
+        if (seller != null && mounted) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setInt('shopregidtered', 1);
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Seller profile created successfully!')),
+            );
+            // Go to post product page
+            Navigator.pushReplacementNamed(context, '/sell-something');
+          }
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to create seller profile.')),
+          );
+        }
+      } catch (e) {
+        setState(() => _isLoading = false);
+        if (e.toString().contains('already_seller') && mounted) {
+          // If the backend says they are already a seller, treat it as a success
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setInt('shopregidtered', 1);
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('You are already a registered seller.')),
+          );
+          Navigator.pushReplacementNamed(context, '/sell-something');
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to create seller profile.')),
+          );
+        }
       }
     }
   }

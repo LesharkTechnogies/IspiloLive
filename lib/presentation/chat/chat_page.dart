@@ -12,7 +12,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sizer/sizer.dart';
-
+import 'widgets/voice_note_player.dart';
 import '../../core/app_export.dart';
 import '../../core/services/conversation_service.dart';
 import '../../core/services/message_service.dart';
@@ -1765,6 +1765,19 @@ class _ChatPageState extends State<ChatPage> {
         );
       case 'audio':
         final durationMs = message['durationMs'] as int?;
+        final path = message['mediaPath'] as String?;
+        if (path != null && path.isNotEmpty) {
+          return SizedBox(
+            width: 65.w,
+            child: VoiceNotePlayer(
+              mediaPath: path,
+              durationMs: durationMs,
+              isSentByMe: isSentByMe,
+              colorScheme: colorScheme,
+              contentColor: isSentByMe ? _sentContentColor(colorScheme) : Colors.black87,
+            ),
+          );
+        }
         final durationLabel = durationMs != null
             ? Duration(milliseconds: durationMs).toString().split('.').first
             : 'Voice note';
@@ -1789,7 +1802,7 @@ class _ChatPageState extends State<ChatPage> {
           text.isEmpty ? '[Unsupported message]' : text,
           style: GoogleFonts.inter(
             fontSize: 14,
-            color: isSentByMe ? _sentContentColor(colorScheme) : colorScheme.onSurface,
+            color: isSentByMe ? _sentContentColor(colorScheme) : Colors.black87,
           ),
         );
     }
@@ -1807,7 +1820,7 @@ class _ChatPageState extends State<ChatPage> {
         Icon(
           icon,
           size: 20,
-          color: isSentByMe ? _sentContentColor(colorScheme) : colorScheme.onSurface,
+          color: isSentByMe ? _sentContentColor(colorScheme) : Colors.black87,
         ),
         SizedBox(width: 2.w),
         Flexible(
@@ -1815,7 +1828,7 @@ class _ChatPageState extends State<ChatPage> {
             label,
             style: GoogleFonts.inter(
               fontSize: 14,
-              color: isSentByMe ? _sentContentColor(colorScheme) : colorScheme.onSurface,
+              color: isSentByMe ? _sentContentColor(colorScheme) : Colors.black87,
             ),
           ),
         ),
@@ -1858,6 +1871,10 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _handleCameraTap() async {
+    await _captureMedia(ImageSource.camera, false);
+  }
+
+  Future<void> _handleAttachmentTap() async {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -1876,14 +1893,6 @@ class _ChatPageState extends State<ChatPage> {
                     fontSize: 18,
                   ),
                 ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_camera),
-                title: const Text('Take a Photo'),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  await _captureMedia(ImageSource.camera, false);
-                },
               ),
               ListTile(
                 leading: const Icon(Icons.videocam),
@@ -2415,7 +2424,7 @@ class _ChatPageState extends State<ChatPage> {
                             decoration: BoxDecoration(
                               color: isSentByMe
                                   ? _sentBubbleColor(colorScheme)
-                                  : Colors.grey[200],
+                                  : colorScheme.surfaceContainerHighest,
                               borderRadius: BorderRadius.circular(18),
                             ),
                             child: Column(
@@ -2440,7 +2449,7 @@ class _ChatPageState extends State<ChatPage> {
                                         fontSize: 12,
                                         color: isSentByMe
                                             ? _sentContentColor(colorScheme)
-                                            : colorScheme.onSurface.withValues(alpha: 0.85),
+                                            : Colors.black87,
                                       ),
                                     ),
                                   ),
@@ -2610,55 +2619,55 @@ class _ChatPageState extends State<ChatPage> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  if (_pendingAttachmentType == 'image')
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.file(
-                        _pendingAttachment!,
+                  if (_pendingAttachmentType == 'audio')
+                    Expanded(
+                      child: VoiceNotePlayer(
+                        mediaPath: _pendingAttachment!.path,
+                        durationMs: _pendingAudioDurationMs,
+                        isSentByMe: true,
+                        colorScheme: colorScheme,
+                        contentColor: colorScheme.onSurface,
+                      ),
+                    )
+                  else ...[
+                    if (_pendingAttachmentType == 'image')
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(
+                          _pendingAttachment!,
+                          height: 60,
+                          width: 60,
+                          fit: BoxFit.cover,
+                        ),
+                      )
+                    else if (_pendingAttachmentType == 'video')
+                      Container(
                         height: 60,
                         width: 60,
-                        fit: BoxFit.cover,
-                      ),
-                    )
-                  else if (_pendingAttachmentType == 'video')
-                    Container(
-                      height: 60,
-                      width: 60,
-                      decoration: BoxDecoration(
-                        color: Colors.black12,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(Icons.videocam, size: 30, color: Colors.black54),
-                    )
-                  else if (_pendingAttachmentType == 'audio')
-                    Container(
-                      height: 60,
-                      width: 60,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1877F2).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(Icons.mic, size: 30, color: Color(0xFF1877F2)),
-                    ),
-                  SizedBox(width: 3.w),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _pendingAttachmentType == 'image' ? 'Photo attached' :
-                          _pendingAttachmentType == 'video' ? 'Video attached' :
-                          'Voice note (${Duration(milliseconds: _pendingAudioDurationMs ?? 0).toString().split('.').first})',
-                          style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13, color: colorScheme.onSurface),
+                        decoration: BoxDecoration(
+                          color: Colors.black12,
+                          borderRadius: BorderRadius.circular(8),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Ready to send... add a caption below',
-                          style: GoogleFonts.inter(color: colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 11),
-                        )
-                      ],
+                        child: const Icon(Icons.videocam, size: 30, color: Colors.black54),
+                      ),
+                    SizedBox(width: 3.w),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _pendingAttachmentType == 'image' ? 'Photo attached' : 'Video attached',
+                            style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13, color: colorScheme.onSurface),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Ready to send... add a caption below',
+                            style: GoogleFonts.inter(color: colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 11),
+                          )
+                        ],
+                      ),
                     ),
-                  ),
+                  ],
                   IconButton(
                     icon: Icon(Icons.close, color: colorScheme.onSurface.withValues(alpha: 0.6)),
                     onPressed: () {
@@ -2722,6 +2731,15 @@ class _ChatPageState extends State<ChatPage> {
                   ],
                   Row(
                     children: [
+                  // Attachment Icon
+                  IconButton(
+                    onPressed: _handleAttachmentTap,
+                    icon: Icon(
+                      Icons.attach_file,
+                      color: const Color(0xFF1877F2),
+                      size: 24,
+                    ),
+                  ),
                   // Camera Icon
                   IconButton(
                     onPressed: _handleCameraTap,
@@ -2862,6 +2880,7 @@ class _ChatPageState extends State<ChatPage> {
       ),
     );
   }
+
 
   Widget _buildLegendItem({
     required IconData icon,

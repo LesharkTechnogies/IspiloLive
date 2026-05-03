@@ -8,10 +8,12 @@ import '../../model/product_model.dart';
 import '../../model/repository/product_repository.dart';
 import '../../widgets/custom_icon_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../core/services/user_service.dart';
+import '../../core/services/seller_service.dart';
 import '../../widgets/custom_bottom_bar.dart';
 import './widgets/category_chip_widget.dart';
 import './widgets/filter_bottom_sheet_widget.dart';
-import './widgets/product_card_widget.dart';
+import '../../widgets/common_product_card.dart';
 import './widgets/quick_actions_widget.dart';
 import './widgets/recently_viewed_widget.dart';
 import './widgets/search_bar_widget.dart';
@@ -26,11 +28,28 @@ class Marketplace extends StatefulWidget {
 class _MarketplaceState extends State<Marketplace> {
   Future<void> _handleSellButton() async {
     final prefs = await SharedPreferences.getInstance();
-    final isShopRegistered = prefs.getInt('shopregidtered') ?? 0;
+    int isShopRegistered = prefs.getInt('shopregidtered') ?? 0;
+
+    if (isShopRegistered != 1) {
+      try {
+        final currentUser = await UserService.getCurrentUser();
+        final userId = currentUser['id']?.toString() ?? currentUser['userId']?.toString();
+        if (userId != null) {
+          final sellerRaw = await SellerService.getSellerRaw(userId);
+          if (sellerRaw != null) {
+            isShopRegistered = 1;
+            await prefs.setInt('shopregidtered', 1);
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+
     if (isShopRegistered == 1) {
       Navigator.pushNamed(context, '/sell-something');
     } else {
-      Navigator.pushNamed(context, '/settings');
+      Navigator.pushNamed(context, '/shop-registration-step1');
     }
   }
 
@@ -199,8 +218,32 @@ class _MarketplaceState extends State<Marketplace> {
   void _applyFilters(Map<String, dynamic> filters) {
     setState(() {
       _currentFilters = filters;
-      // In a real app with large datasets, you'd apply these filters server-side
-      // For now, we filter the loaded products
+      
+      // Perform client-side filtering
+      if (_filteredProducts.isNotEmpty) {
+        // Re-filter from a fresh load would be better, but we filter current list
+        _filteredProducts = _filteredProducts.where((product) {
+          bool matches = true;
+          
+          if (filters['location'] != null && filters['location'] != 'Any Location') {
+            matches = matches && product.location.toLowerCase().contains(filters['location'].toString().toLowerCase());
+          }
+          
+          if (filters['condition'] != null && filters['condition'] != 'Any Condition') {
+            matches = matches && product.condition.toLowerCase() == filters['condition'].toString().toLowerCase();
+          }
+          
+          if (filters['minPrice'] != null) {
+            matches = matches && product.price >= (filters['minPrice'] as num);
+          }
+          
+          if (filters['maxPrice'] != null && filters['maxPrice'] < 10000) {
+            matches = matches && product.price <= (filters['maxPrice'] as num);
+          }
+          
+          return matches;
+        }).toList();
+      }
     });
   }
 
@@ -362,8 +405,10 @@ class _MarketplaceState extends State<Marketplace> {
                                       (context, index) {
                                         if (index < _filteredProducts.length) {
                                           final product = _filteredProducts[index];
-                                          return ProductCardWidget(
+                                          return CommonProductCard(
                                             product: product.toJson(),
+                                            showSeller: true,
+                                            showLocation: true,
                                             onTap: () => _onProductTap(product),
                                             onLongPress: () =>
                                                 _onProductLongPress(product),
@@ -575,3 +620,4 @@ class _MarketplaceState extends State<Marketplace> {
     );
   }
 }
+

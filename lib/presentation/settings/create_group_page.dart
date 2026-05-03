@@ -39,9 +39,10 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
       
   
     } catch (e) {
+      debugPrint('Error creating group: $e'); // Print to terminal
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to create group: $e')),
+        const SnackBar(content: Text('Failed to create group. Please try again.')),
       );
     } finally {
       if (mounted) {

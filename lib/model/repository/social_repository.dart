@@ -117,8 +117,7 @@ class PostRepository {
         'description': description,
         'privateGroup': isPrivate,
       };
-
-      final response = await ApiService.post('/groups', payload);
+         final response = await ApiService.post('/groups', payload);
       return response as Map<String, dynamic>;
     } catch (e) {
       throw Exception('Failed to create group: $e');

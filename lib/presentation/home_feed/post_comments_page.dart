@@ -65,7 +65,8 @@ class _PostCommentsPageState extends State<PostCommentsPage> {
       final fetched = await PostRepository.getComments(postId: post.id, page: 0, size: 50);
       _buildThreadData(fetched);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to load comments: $e')));
+      debugPrint('Error loading comments: $e');
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to load comments.')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -346,7 +347,8 @@ class _PostCommentsPageState extends State<PostCommentsPage> {
         _activeReplyFor = null;
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to comment: $e')));
+      debugPrint('Failed to add comment: $e');
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to comment.')));
     }
   }
 
@@ -372,7 +374,8 @@ class _PostCommentsPageState extends State<PostCommentsPage> {
         _replyLikedState[reply.id] = previousLiked;
         _replyLikeCounts[reply.id] = previousCount;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to like reply: $e')));
+      debugPrint('Failed to like reply: $e');
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to like reply.')));
     }
   }
 

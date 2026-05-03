@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
@@ -211,11 +212,10 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
       ]);
       final posts = results[0];
       final groupPosts = results[1];
-      _appendUniquePosts([...posts, ...groupPosts]);
-   
+      await _appendUniquePosts([...posts, ...groupPosts]);
+
       if (!mounted) return;
-      setState(() {
-        _page = 1;
+      setState(() {        _page = 1;
         _hasMorePosts = (posts.length + groupPosts.length) >= _pageSize;
         _isLoading = false;
         _rebuildFeedEntries();
@@ -226,7 +226,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
       debugPrint('Error loading posts: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load feed: $e')),
+          const SnackBar(content: Text('Failed to load feed. Please try again.')),
         );
       }
       if (mounted) {
@@ -248,10 +248,9 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
       final newGroupPosts = results[1];
       final combinedNewPosts = [...newPosts, ...newGroupPosts];
       final beforeAppendCount = _posts.length;
-      _appendUniquePosts(combinedNewPosts);
-      
-      if (!mounted) return;
-      setState(() {
+      await _appendUniquePosts(combinedNewPosts);
+
+      if (!mounted) return;      setState(() {
         _page++;
         if (combinedNewPosts.length < _pageSize || _posts.length == beforeAppendCount) {
           // If fewer than page size returned or no new unique posts, assume end
@@ -265,7 +264,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
       debugPrint('Error loading more posts: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load more posts: $e')),
+          const SnackBar(content: Text('Failed to load more posts.')),
         );
       }
     } finally {
@@ -273,10 +272,14 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
     }
   }
 
-  void _appendUniquePosts(List<PostModel> posts) {
+  Future<void> _appendUniquePosts(List<PostModel> posts) async {
+    final prefs = await SharedPreferences.getInstance();
+    final likedPosts = prefs.getStringList('liked_posts') ?? [];
+
     for (final post in posts) {
       if (_seenPostIds.add(post.id)) {
-        _posts.add(post);
+        final isLiked = post.isLiked || likedPosts.contains(post.id);
+        _posts.add(post.copyWith(isLiked: isLiked));
       }
     }
     _rebuildFeedEntries();
@@ -356,16 +359,62 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
     if (_likingPosts.contains(post.id)) return;
     _likingPosts.add(post.id);
 
-    try {
-      final updatedPost = await PostRepository.toggleLikePost(post.id);
+    final bool previousLikeState = post.isLiked;
+    final int previousLikesCount = post.likesCount;
+    final int newLikesCount = previousLikeState ? (previousLikesCount - 1) : (previousLikesCount + 1);
+
+    // Optimistic UI Update
+    setState(() {
       final idx = _posts.indexWhere((p) => p.id == post.id);
       if (idx != -1) {
+        _posts[idx] = post.copyWith(
+          isLiked: !previousLikeState,
+          likesCount: newLikesCount >= 0 ? newLikesCount : 0,
+        );
+      }
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      List<String> likedPosts = prefs.getStringList('liked_posts') ?? [];
+      
+      if (!previousLikeState) {
+        if (!likedPosts.contains(post.id)) likedPosts.add(post.id);
+      } else {
+        likedPosts.remove(post.id);
+      }
+      await prefs.setStringList('liked_posts', likedPosts);
+
+      final updatedPost = await PostRepository.toggleLikePost(post.id);
+      
+      // Update with server response if needed (to sync counts accurately)
+      if (mounted) {
         setState(() {
-          _posts[idx] = updatedPost;
+          final idx = _posts.indexWhere((p) => p.id == post.id);
+          if (idx != -1) {
+            // Keep local liked state if the server's boolean is missing or incorrect
+            // but use the server's count
+            _posts[idx] = _posts[idx].copyWith(
+              likesCount: updatedPost.likesCount,
+              isLiked: updatedPost.isLiked || likedPosts.contains(post.id),
+            );
+          }
         });
       }
     } catch (e) {
       debugPrint('Error toggling like: $e');
+      // Revert optimistic update on error
+      if (mounted) {
+        setState(() {
+          final idx = _posts.indexWhere((p) => p.id == post.id);
+          if (idx != -1) {
+            _posts[idx] = post.copyWith(
+              isLiked: previousLikeState,
+              likesCount: previousLikesCount,
+            );
+          }
+        });
+      }
     } finally {
       _likingPosts.remove(post.id);
     }
@@ -456,7 +505,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete post: $e')),
+            const SnackBar(content: Text('Failed to delete post.')),
           );
         }
       }
@@ -816,7 +865,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
                               );
                             } catch (e) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Failed to follow: $e')),
+                                const SnackBar(content: Text('Failed to follow user.')),
                               );
                             }
                           },
@@ -912,7 +961,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
                             );
                           } catch (e) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Failed to join: $e')),
+                              const SnackBar(content: Text('Failed to join group.')),
                             );
                           }
                         },
@@ -1214,7 +1263,7 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
 
   Widget _buildExpandablePostText(PostModel post, ColorScheme colorScheme) {
     final content = post.content.trim();
-    const int previewChars = 170;
+    const int previewChars = 150;
 
     if (content.length <= previewChars) {
       return Text(content);
@@ -1222,11 +1271,12 @@ class _HomeFeedState extends State<HomeFeed> with TickerProviderStateMixin {
 
     final isExpanded = _expandedPostIds.contains(post.id);
     final preview = '${content.substring(0, previewChars)}...';
+    final expandedContent = content.length > 1500 ? '${content.substring(0, 1500)}...\n(Text truncated due to length)' : content;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(isExpanded ? content : preview),
+        Text(isExpanded ? expandedContent : preview),
         SizedBox(height: 0.6.h),
         GestureDetector(
           onTap: () {
@@ -1335,9 +1385,9 @@ class _AdaptivePostMediaLayoutState extends State<AdaptivePostMediaLayout> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           widget.textContent,
-          SizedBox(height: 1.h),
+          SizedBox(height: 1.5.h),
           SizedBox(
-            height: 15.h,
+            height: 25.h,
             width: double.infinity,
             child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
           ),
@@ -1345,69 +1395,52 @@ class _AdaptivePostMediaLayoutState extends State<AdaptivePostMediaLayout> {
       );
     }
 
-    // Landscape (sleeping rectangle) vs Portrait/Square (tall/thin/square)
-    if (_aspectRatio! > 1.1) {
-      // Landscape: text on top, image below
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          widget.textContent,
-          SizedBox(height: 1.h),
-          ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: 25.h), // avoid filling screen
-            child: Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.network(
-                    widget.imageUrl!,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                  ),
-                ),
-                if (widget.imageUrl!.startsWith('http'))
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: _buildDownloadButton(context, widget.imageUrl!),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      );
-    } else {
-      // Portrait / Square: text on left, image on right
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(flex: 4, child: widget.textContent),
-          SizedBox(width: 3.w),
-          Expanded(
-            flex: 6,
-            child: Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.network(
-                    widget.imageUrl!,
-                    fit: BoxFit.cover,
-                    height: 20.h, // constrained size
-                    width: double.infinity,
-                  ),
-                ),
-                if (widget.imageUrl!.startsWith('http'))
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: _buildDownloadButton(context, widget.imageUrl!),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      );
+    // Enforce aspect ratio limits
+    // Portrait max: 4:5 = 0.8
+    // Landscape max: 1.91:1 = 1.91
+    // Square 1:1 falls between these limits naturally
+    double clampedAspectRatio = _aspectRatio!;
+    if (clampedAspectRatio < 0.8) {
+      clampedAspectRatio = 0.8;
+    } else if (clampedAspectRatio > 1.91) {
+      clampedAspectRatio = 1.91;
     }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        widget.textContent,
+        SizedBox(height: 1.5.h),
+        ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: 65.h),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: AspectRatio(
+              aspectRatio: clampedAspectRatio,
+              child: Stack(
+                fit: StackFit.expand,
+                alignment: Alignment.center,
+                children: [
+                  Image.network(
+                    widget.imageUrl!,
+                    fit: BoxFit.cover, // Crop edges to fit while preserving aspect ratio
+                    errorBuilder: (context, error, stackTrace) => const Center(
+                      child: Icon(Icons.broken_image, color: Colors.grey, size: 48),
+                    ),
+                  ),
+                  if (widget.imageUrl!.startsWith('http'))
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: _buildDownloadButton(context, widget.imageUrl!),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

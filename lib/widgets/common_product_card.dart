@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import '../core/app_export.dart';
+import 'dart:math';
 
 /// Common reusable product card widget used across marketplace and recently viewed
 /// Maintains consistent sizing: 160x240 with 120px image height
-class CommonProductCard extends StatelessWidget {
+class CommonProductCard extends StatefulWidget {
   final Map<String, dynamic> product;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
@@ -22,6 +22,53 @@ class CommonProductCard extends StatelessWidget {
     this.showLocation = true,
     this.heroTagSuffix,
   });
+
+  @override
+  State<CommonProductCard> createState() => _CommonProductCardState();
+}
+
+class _CommonProductCardState extends State<CommonProductCard> {
+  bool _isHovered = false;
+
+  String _getImage() {
+    final img = widget.product['mainImage'] ?? widget.product['image'] ?? widget.product['imageUrl'] ?? widget.product['thumbnail'];
+    if (img is String && img.isNotEmpty) return img;
+    final images = widget.product['images'] ?? widget.product['mediaUrls'];
+    if (images is List && images.isNotEmpty) return images.first.toString();
+    return '';
+  }
+
+  String _getTitle() {
+    return (widget.product['title'] ?? widget.product['name'] ?? 'Untitled').toString();
+  }
+
+  String _getPrice() {
+    final p = widget.product['price'];
+    if (p is num) return '\$${p.toStringAsFixed(2)}';
+    return p?.toString() ?? '\$0.00';
+  }
+
+  String _getSellerName() {
+    final s = widget.product['seller'];
+    if (s is Map) return (s['name'] ?? s['username'] ?? s['title'] ?? 'Unknown Seller').toString();
+    return s?.toString() ?? 'Unknown Seller';
+  }
+
+  String _getRating() {
+    final r = widget.product['rating'] ?? widget.product['averageRating'];
+    if (r is num) return r.toStringAsFixed(1);
+    return '0.0';
+  }
+
+  String _getLocation() {
+    return (widget.product['location'] ?? '').toString();
+  }
+
+  String _getHeroTag() {
+    final id = widget.product['id'];
+    final idStr = (id == null || id.toString().isEmpty) ? widget.product.hashCode.toString() : id.toString();
+    return 'product-$idStr${widget.heroTagSuffix ?? ""}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,60 +105,80 @@ class CommonProductCard extends StatelessWidget {
             fontWeight: FontWeight.w400,
             color: colorScheme.onSurface.withValues(alpha: 0.7));
 
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.lightImpact();
-        onTap();
-      },
-      onLongPress: onLongPress != null
-          ? () {
-              HapticFeedback.mediumImpact();
-              onLongPress!();
-            }
-          : null,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          minWidth: 100,
-          maxWidth: 500,
-          minHeight: 242,
-          maxHeight: 242,
-        ),
-        child: Container(
+    // 3D effect parameters
+    final transform = Matrix4.identity()
+      ..setEntry(3, 2, 0.001) // perspective
+      ..rotateX(_isHovered ? 0.05 : 0)
+      ..rotateY(_isHovered ? 0.05 : 0);
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        onPanUpdate: (details) {
+          setState(() {
+            _isHovered = true;
+          });
+        },
+        onPanEnd: (_) => setState(() => _isHovered = false),
+        onTapDown: (_) => setState(() => _isHovered = true),
+        onTapUp: (_) => setState(() => _isHovered = false),
+        onTapCancel: () => setState(() => _isHovered = false),
+        onTap: () {
+          HapticFeedback.lightImpact();
+          widget.onTap();
+        },
+        onLongPress: widget.onLongPress != null
+            ? () {
+                HapticFeedback.mediumImpact();
+                widget.onLongPress!();
+              }
+            : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          transform: transform,
+          transformAlignment: FractionalOffset.center,
+          constraints: const BoxConstraints(
+            minWidth: 100,
+            maxWidth: 500,
+            minHeight: 242,
+            maxHeight: 242,
+          ),
           decoration: BoxDecoration(
             color: colorScheme.surface,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: colorScheme.outline.withValues(alpha: 0.2),
+              color: colorScheme.outline.withValues(alpha: _isHovered ? 0.5 : 0.2),
             ),
             boxShadow: [
               BoxShadow(
-                color: theme.shadowColor.withValues(alpha: 0.05),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
+                color: theme.shadowColor.withValues(alpha: _isHovered ? 0.15 : 0.05),
+                blurRadius: _isHovered ? 16 : 8,
+                offset: Offset(0, _isHovered ? 8 : 2),
+                spreadRadius: _isHovered ? 2 : 0,
               ),
             ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Product Image - Fixed height 120px, full width
+              // Product Image
               ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(12)),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                 child: SizedBox(
                   height: 120,
                   width: double.infinity,
                   child: Hero(
-                    tag: 'product-${product["id"]}${heroTagSuffix ?? ""}',
+                    tag: _getHeroTag(),
                     child: CustomImageWidget(
-                      imageUrl: product["image"] as String,
+                      imageUrl: _getImage(),
                       fit: BoxFit.cover,
                     ),
                   ),
                 ),
               ),
 
-              // Product Details - Remaining 120px
+              // Product Details
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -120,7 +187,7 @@ class CommonProductCard extends StatelessWidget {
                     children: [
                       // Product Title
                       Text(
-                        product["title"] as String,
+                        _getTitle(),
                         style: productTitleStyle,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -129,24 +196,23 @@ class CommonProductCard extends StatelessWidget {
                       const SizedBox(height: 8),
 
                       // Price
-                      Text(product["price"] as String, style: priceStyle),
+                      Text(_getPrice(), style: priceStyle),
 
                       const SizedBox(height: 4),
 
-                      // Seller Info (if enabled)
-                      if (showSeller && product["seller"] != null) ...[
+                      // Seller Info
+                      if (widget.showSeller) ...[
                         Row(
                           children: [
                             CustomIconWidget(
                               iconName: 'person',
-                              color:
-                                  colorScheme.onSurface.withValues(alpha: 0.6),
+                              color: colorScheme.onSurface.withValues(alpha: 0.6),
                               size: 12,
                             ),
                             const SizedBox(width: 4),
                             Expanded(
                               child: Text(
-                                product["seller"] as String,
+                                _getSellerName(),
                                 style: metaStyle,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -168,25 +234,23 @@ class CommonProductCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            product["rating"].toString(),
+                            _getRating(),
                             style: metaStyle.copyWith(
                               fontSize: 12,
-                              color:
-                                  colorScheme.onSurface.withValues(alpha: 0.6),
+                              color: colorScheme.onSurface.withValues(alpha: 0.6),
                             ),
                           ),
-                          if (showLocation && product["location"] != null) ...[
+                          if (widget.showLocation && _getLocation().isNotEmpty) ...[
                             const SizedBox(width: 8),
                             CustomIconWidget(
                               iconName: 'location_on',
-                              color:
-                                  colorScheme.onSurface.withValues(alpha: 0.6),
+                              color: colorScheme.onSurface.withValues(alpha: 0.6),
                               size: 12,
                             ),
                             const SizedBox(width: 4),
                             Expanded(
                               child: Text(
-                                product["location"] as String,
+                                _getLocation(),
                                 style: metaStyle,
                                 overflow: TextOverflow.ellipsis,
                               ),

@@ -171,7 +171,16 @@ class _ProductDetailState extends State<ProductDetail> {
     final seller = product['seller'] as Map<String, dynamic>? ?? {};
     final specifications = product['specifications'] as Map<String, dynamic>? ?? {};
     final shipping = product['shipping'] as Map<String, dynamic>? ?? {};
-    final images = (product['images'] as List?)?.cast<String>() ?? ['https://via.placeholder.com/400x400?text=No+Image'];
+    
+    final mainImage = product['mainImage'] as String?;
+    final otherImages = (product['images'] as List?)?.cast<String>() ?? [];
+    final List<String> images = [
+      if (mainImage != null && mainImage.isNotEmpty) mainImage,
+      ...otherImages
+    ].where((e) => e.isNotEmpty).toSet().toList();
+    if (images.isEmpty) {
+      images.add('https://via.placeholder.com/400x400?text=No+Image');
+    }
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
@@ -202,6 +211,8 @@ class _ProductDetailState extends State<ProductDetail> {
                         condition: product['condition'] as String? ?? 'New',
                         rating: ((product['rating'] as num?) ?? 4.0).toDouble(),
                         reviewCount: product['reviewCount'] as int? ?? 0,
+                        category: product['category'] as String?,
+                        stockQuantity: (product['stockQuantity'] as num?)?.toInt(),
                       ),
 
                       const SizedBox(height: 16),
@@ -262,7 +273,9 @@ class _ProductDetailState extends State<ProductDetail> {
               // Action Buttons Bar
               ActionButtonsBar(
                 onContactSeller: _contactSeller,
-                onMakeOffer: _makeOffer,
+                onBuyNow: _buyNow,
+               
+
                 onSaveProduct: _toggleSaveProduct,
                 isSaved: _isSaved,
               ),
@@ -609,55 +622,15 @@ class _ProductDetailState extends State<ProductDetail> {
     _openMessagingWithSeller();
   }
 
-  void _makeOffer() {
+  void _buyNow() {
     if (_productData == null) return;
 
-    final TextEditingController offerController = TextEditingController();
-    final TextEditingController messageController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Make an Offer'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: offerController,
-                decoration: const InputDecoration(
-                  labelText: 'Your Offer Price',
-                  prefixText: '\$ ',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: messageController,
-                decoration: const InputDecoration(
-                  labelText: 'Message (optional)',
-                  border: OutlineInputBorder(),
-                ),
-                maxLines: 3,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _submitOffer(offerController.text, messageController.text);
-            },
-            child: const Text('Send Offer'),
-          ),
-        ],
-      ),
+    Navigator.pushNamed(
+      context,
+      '/checkout',
+      arguments: {
+        'product': _productData,
+      },
     );
   }
 
@@ -690,3 +663,4 @@ class _ProductDetailState extends State<ProductDetail> {
     );
   }
 }
+
